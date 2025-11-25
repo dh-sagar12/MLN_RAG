@@ -1,0 +1,357 @@
+{% extends "base.html" %}
+
+{% block title %}Chat - RAG Chatbot{% endblock %}
+
+{% block content %}
+<div class="flex h-[calc(100vh-8rem)] gap-4">
+    <!-- Chat Sessions Sidebar -->
+    <div class="w-64 bg-white rounded-lg shadow p-4 flex flex-col">
+        <div class="flex justify-between items-center mb-4">
+            <h2 class="text-lg font-semibold">Chat Sessions</h2>
+            <button id="new-chat-btn" class="text-blue-600 hover:text-blue-800 text-sm font-medium">
+                + New
+            </button>
+        </div>
+        <div id="chat-sessions" class="flex-1 overflow-y-auto space-y-2">
+            <!-- Sessions will be loaded here -->
+        </div>
+    </div>
+    
+    <!-- Main Chat Area -->
+    <div class="flex-1 flex flex-col bg-white rounded-lg shadow">
+        <div class="p-4 border-b">
+            <h1 class="text-2xl font-bold text-gray-900" id="chat-title">New Chat</h1>
+        </div>
+        
+        <!-- Chat Messages -->
+        <div id="chat-messages" class="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50">
+            <div class="text-center text-gray-500 py-8">
+                Start a conversation by asking a question below.
+            </div>
+        </div>
+        
+        <!-- Query Form -->
+        <div class="p-4 border-t bg-white">
+            <form id="query-form" class="space-y-3">
+                <div class="flex items-end space-x-2">
+                    <div class="flex-1">
+                        <textarea id="query" name="query" rows="2" required
+                                  class="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border resize-none"
+                                  placeholder="Ask a question about your knowledge bases..."></textarea>
+                    </div>
+                    <div class="flex items-center space-x-2">
+                        <div>
+                            <label for="top_k" class="block text-xs text-gray-600 mb-1">Top K</label>
+                            <input type="number" id="top_k" name="top_k" value="5" min="1" max="20"
+                                   class="block w-16 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-2 py-1 border">
+                        </div>
+                        <div>
+                            <label for="history_k" class="block text-xs text-gray-600 mb-1">History</label>
+                            <input type="number" id="history_k" name="history_k" value="10" min="0" max="50"
+                                   class="block w-16 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-2 py-1 border">
+                        </div>
+                        <button type="submit" id="submit-btn"
+                                class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            Send
+                        </button>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+    
+    <!-- Results Section (Collapsible) -->
+    <div id="results-section" class="w-64 bg-white rounded-lg shadow p-4 hidden">
+        <div class="flex justify-between items-center mb-4">
+            <h2 class="text-lg font-semibold">Sources</h2>
+            <button id="close-sources" class="text-gray-500 hover:text-gray-700">×</button>
+        </div>
+        <div id="sources" class="overflow-y-auto space-y-2 text-sm"></div>
+    </div>
+</div>
+
+<script>
+let currentSessionId = null;
+let chatHistory = [];
+
+// DOM elements
+const chatMessages = document.getElementById('chat-messages');
+const queryForm = document.getElementById('query-form');
+const submitBtn = document.getElementById('submit-btn');
+const chatSessionsDiv = document.getElementById('chat-sessions');
+const newChatBtn = document.getElementById('new-chat-btn');
+const chatTitle = document.getElementById('chat-title');
+const resultsSection = document.getElementById('results-section');
+const sourcesDiv = document.getElementById('sources');
+const closeSourcesBtn = document.getElementById('close-sources');
+
+// Load chat sessions on page load
+loadChatSessions();
+
+// Check if we have a session_id in URL
+const urlParams = new URLSearchParams(window.location.search);
+const sessionIdFromUrl = urlParams.get('session_id');
+if (sessionIdFromUrl) {
+    loadChatSession(sessionIdFromUrl);
+}
+
+// Event listeners
+newChatBtn.addEventListener('click', createNewChat);
+queryForm.addEventListener('submit', handleQuery);
+closeSourcesBtn.addEventListener('click', () => {
+    resultsSection.classList.add('hidden');
+});
+
+async function loadChatSessions() {
+    try {
+        const response = await fetch('/api/chat/sessions');
+        const data = await response.json();
+        
+        chatSessionsDiv.innerHTML = '';
+        
+        if (data.sessions && data.sessions.length > 0) {
+            data.sessions.forEach(session => {
+                const sessionDiv = createSessionElement(session);
+                chatSessionsDiv.appendChild(sessionDiv);
+            });
+        } else {
+            chatSessionsDiv.innerHTML = '<p class="text-sm text-gray-500 text-center py-4">No chat sessions yet</p>';
+        }
+    } catch (error) {
+        console.error('Error loading chat sessions:', error);
+    }
+}
+
+function createSessionElement(session) {
+    const div = document.createElement('div');
+    div.className = `p-2 rounded cursor-pointer hover:bg-gray-100 ${currentSessionId === session.id ? 'bg-blue-50 border border-blue-200' : ''}`;
+    div.dataset.sessionId = session.id;
+    
+    div.innerHTML = `
+        <div class="flex justify-between items-start">
+            <div class="flex-1 min-w-0">
+                <p class="text-sm font-medium text-gray-900 truncate">${session.title || 'New Chat'}</p>
+                <p class="text-xs text-gray-500">${new Date(session.updated_at).toLocaleDateString()}</p>
+            </div>
+            <button class="delete-session ml-2 text-red-500 hover:text-red-700 text-xs" data-session-id="${session.id}">×</button>
+        </div>
+    `;
+    
+    div.addEventListener('click', (e) => {
+        if (!e.target.classList.contains('delete-session')) {
+            loadChatSession(session.id);
+        }
+    });
+    
+    div.querySelector('.delete-session').addEventListener('click', async (e) => {
+        e.stopPropagation();
+        if (confirm('Delete this chat session?')) {
+            await deleteChatSession(session.id);
+        }
+    });
+    
+    return div;
+}
+
+async function createNewChat() {
+    try {
+        const response = await fetch('/api/chat/sessions', {
+            method: 'POST'
+        });
+        const data = await response.json();
+        
+        currentSessionId = data.session_id;
+        chatHistory = [];
+        chatTitle.textContent = 'New Chat';
+        chatMessages.innerHTML = '<div class="text-center text-gray-500 py-8">Start a conversation by asking a question below.</div>';
+        resultsSection.classList.add('hidden');
+        
+        // Update URL
+        window.history.pushState({}, '', `/chat?session_id=${currentSessionId}`);
+        
+        // Reload sessions
+        await loadChatSessions();
+    } catch (error) {
+        console.error('Error creating new chat:', error);
+        alert('Failed to create new chat');
+    }
+}
+
+async function loadChatSession(sessionId) {
+    try {
+        const response = await fetch(`/api/chat/sessions/${sessionId}`);
+        const data = await response.json();
+        
+        if (data.error) {
+            alert(data.error);
+            return;
+        }
+        
+        currentSessionId = sessionId;
+        chatTitle.textContent = data.title || 'New Chat';
+        
+        // Load messages
+        chatMessages.innerHTML = '';
+        chatHistory = [];
+        
+        if (data.messages && data.messages.length > 0) {
+            data.messages.forEach(msg => {
+                addMessage(msg.role, msg.content, false);
+                chatHistory.push({ role: msg.role, content: msg.content });
+            });
+        } else {
+            chatMessages.innerHTML = '<div class="text-center text-gray-500 py-8">Start a conversation by asking a question below.</div>';
+        }
+        
+        // Update URL
+        window.history.pushState({}, '', `/chat?session_id=${sessionId}`);
+        
+        // Reload sessions to update active state
+        await loadChatSessions();
+    } catch (error) {
+        console.error('Error loading chat session:', error);
+        alert('Failed to load chat session');
+    }
+}
+
+async function deleteChatSession(sessionId) {
+    try {
+        const response = await fetch(`/api/chat/sessions/${sessionId}`, {
+            method: 'DELETE'
+        });
+        
+        if (response.ok) {
+            if (currentSessionId === sessionId) {
+                currentSessionId = null;
+                chatHistory = [];
+                chatTitle.textContent = 'New Chat';
+                chatMessages.innerHTML = '<div class="text-center text-gray-500 py-8">Start a conversation by asking a question below.</div>';
+                window.history.pushState({}, '', '/chat');
+            }
+            await loadChatSessions();
+        }
+    } catch (error) {
+        console.error('Error deleting chat session:', error);
+        alert('Failed to delete chat session');
+    }
+}
+
+async function handleQuery(e) {
+    e.preventDefault();
+    
+    const query = document.getElementById('query').value.trim();
+    const topK = parseInt(document.getElementById('top_k').value) || 5;
+    const historyK = parseInt(document.getElementById('history_k').value) || 10;
+    
+    if (!query) return;
+    
+    // Create session if doesn't exist
+    if (!currentSessionId) {
+        await createNewChat();
+    }
+    
+    // Disable form
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Sending...';
+    
+    // Add user message
+    addMessage('user', query);
+    chatHistory.push({ role: 'user', content: query });
+    
+    // Clear previous results
+    sourcesDiv.innerHTML = '';
+    resultsSection.classList.add('hidden');
+    
+    try {
+        const response = await fetch('/api/query', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                query,
+                top_k: topK,
+                session_id: currentSessionId,
+                history_k: historyK
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.error) {
+            addMessage('assistant', `Error: ${data.error}`, 'text-red-600');
+        } else {
+            // Add assistant message
+            addMessage('assistant', data.answer);
+            chatHistory.push({ role: 'assistant', content: data.answer });
+            
+            // Show sources
+            if (data.kbs_used && data.kbs_used.length > 0) {
+                showSources(data);
+            }
+            
+            // Reload sessions to update title if needed
+            await loadChatSessions();
+        }
+    } catch (error) {
+        addMessage('assistant', `Error: ${error.message}`, 'text-red-600');
+    } finally {
+        // Re-enable form
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Send';
+        document.getElementById('query').value = '';
+    }
+}
+
+function addMessage(role, content, scroll = true) {
+    // Remove placeholder if exists
+    const placeholder = chatMessages.querySelector('.text-center');
+    if (placeholder) placeholder.remove();
+    
+    const messageDiv = document.createElement('div');
+    messageDiv.className = `flex ${role === 'user' ? 'justify-end' : 'justify-start'}`;
+    
+    const bubble = document.createElement('div');
+    bubble.className = `max-w-[80%] rounded-lg px-4 py-2 ${
+        role === 'user' 
+            ? 'bg-blue-600 text-white' 
+            : 'bg-white border text-gray-800'
+    }`;
+    bubble.textContent = content;
+    
+    messageDiv.appendChild(bubble);
+    chatMessages.appendChild(messageDiv);
+    
+    if (scroll) {
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+}
+
+function showSources(data) {
+    let sourcesHTML = '<div class="space-y-3">';
+    
+    if (data.kbs_used && data.kbs_used.length > 0) {
+        sourcesHTML += `<p class="font-medium text-gray-700 text-xs">Knowledge Bases:</p>`;
+        sourcesHTML += `<ul class="list-disc list-inside space-y-1 text-xs text-gray-600">`;
+        data.kbs_used.forEach(kb => {
+            sourcesHTML += `<li>${kb}</li>`;
+        });
+        sourcesHTML += `</ul>`;
+    }
+    
+    if (data.chunks && data.chunks.length > 0) {
+        sourcesHTML += `<p class="font-medium text-gray-700 text-xs mt-3">Relevant Chunks:</p>`;
+        data.chunks.forEach((chunk, idx) => {
+            sourcesHTML += `<div class="border rounded p-2 bg-gray-50 mt-1">`;
+            sourcesHTML += `<p class="text-xs text-gray-500 mb-1">${chunk.kb_name} (${(chunk.similarity * 100).toFixed(1)}%)</p>`;
+            sourcesHTML += `<p class="text-xs text-gray-700">${chunk.text.substring(0, 150)}${chunk.text.length > 150 ? '...' : ''}</p>`;
+            sourcesHTML += `</div>`;
+        });
+    }
+    
+    sourcesHTML += '</div>';
+    sourcesDiv.innerHTML = sourcesHTML;
+    resultsSection.classList.remove('hidden');
+}
+</script>
+{% endblock %}

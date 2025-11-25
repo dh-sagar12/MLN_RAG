@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+
+{% block title %}{{ kb.name }} - RAG Chatbot{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <div class="flex justify-between items-center">
+        <div>
+            <h1 class="text-3xl font-bold text-gray-900">{{ kb.name }}</h1>
+            {% if kb.description %}
+            <p class="mt-2 text-gray-600">{{ kb.description }}</p>
+            {% endif %}
+        </div>
+        <a href="/" class="text-blue-600 hover:text-blue-800">← Back to Knowledge Bases</a>
+    </div>
+    
+    <!-- Upload File Form -->
+    <div class="bg-white rounded-lg shadow p-6">
+        <h2 class="text-xl font-semibold mb-4">Upload Document</h2>
+        <form method="POST" action="/kb/{{ kb.id }}/upload" enctype="multipart/form-data" class="space-y-4">
+            <div>
+                <label for="file" class="block text-sm font-medium text-gray-700">File</label>
+                <input type="file" id="file" name="file" required accept=".pdf,.txt,.docx,.pptx,.md,.html"
+                       class="mt-1 block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100">
+                <p class="mt-1 text-xs text-gray-500">Supported formats: PDF, TXT, DOCX, PPTX, MD, HTML</p>
+            </div>
+            <button type="submit"
+                    class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
+                Upload & Process
+            </button>
+        </form>
+    </div>
+    
+    <!-- Process All Button -->
+    <div class="bg-white rounded-lg shadow p-6">
+        <h2 class="text-xl font-semibold mb-4">Process All Files</h2>
+        <p class="text-sm text-gray-600 mb-4">Create embeddings for all uploaded files in this knowledge base.</p>
+        <button onclick="processKB()"
+                class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500">
+            Process All Files
+        </button>
+    </div>
+    
+    <!-- Files List -->
+    <div class="bg-white rounded-lg shadow">
+        <div class="px-6 py-4 border-b border-gray-200">
+            <h2 class="text-xl font-semibold">Uploaded Files</h2>
+        </div>
+        <div class="divide-y divide-gray-200">
+            {% if files %}
+                {% for file in files %}
+                <div class="px-6 py-4 hover:bg-gray-50">
+                    <div class="flex justify-between items-center">
+                        <div>
+                            <p class="text-sm font-medium text-gray-900">{{ file.file_name }}</p>
+                            <p class="text-xs text-gray-500 mt-1">
+                                Type: {{ file.file_type }} | Size: {{ (file.file_size / 1024) | round(2) }} KB
+                            </p>
+                            <p class="text-xs text-gray-400 mt-1">
+                                Uploaded: {{ file.created_at.strftime('%Y-%m-%d %H:%M') }}
+                            </p>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            {% else %}
+                <div class="px-6 py-8 text-center text-gray-500">
+                    No files uploaded yet. Upload a document above to get started.
+                </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<script>
+async function processKB() {
+    const response = await fetch('/kb/{{ kb.id }}/process', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        }
+    });
+    const data = await response.json();
+    alert(data.message || 'Processing started');
+}
+</script>
+{% endblock %}
+
