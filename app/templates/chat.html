@@ -51,7 +51,7 @@
                                    class="block w-16 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-2 py-1 border">
                         </div>
                         <button type="submit" id="submit-btn"
-                                class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed">
                             Send
                         </button>
                     </div>
@@ -78,6 +78,7 @@ let chatHistory = [];
 const chatMessages = document.getElementById('chat-messages');
 const queryForm = document.getElementById('query-form');
 const submitBtn = document.getElementById('submit-btn');
+const queryTextarea = document.getElementById('query');
 const chatSessionsDiv = document.getElementById('chat-sessions');
 const newChatBtn = document.getElementById('new-chat-btn');
 const chatTitle = document.getElementById('chat-title');
@@ -100,6 +101,14 @@ newChatBtn.addEventListener('click', createNewChat);
 queryForm.addEventListener('submit', handleQuery);
 closeSourcesBtn.addEventListener('click', () => {
     resultsSection.classList.add('hidden');
+});
+
+// Add Ctrl+Enter support for submitting query
+queryTextarea.addEventListener('keydown', (e) => {
+    if (e.ctrlKey && e.key === 'Enter') {
+        e.preventDefault();
+        queryForm.dispatchEvent(new Event('submit'));
+    }
 });
 
 async function loadChatSessions() {
@@ -239,7 +248,8 @@ async function deleteChatSession(sessionId) {
 async function handleQuery(e) {
     e.preventDefault();
     
-    const query = document.getElementById('query').value.trim();
+    const queryInput = document.getElementById('query');
+    const query = queryInput.value.trim();
     const topK = parseInt(document.getElementById('top_k').value) || 5;
     const historyK = parseInt(document.getElementById('history_k').value) || 10;
     
@@ -250,13 +260,20 @@ async function handleQuery(e) {
         await createNewChat();
     }
     
+    // Clear input field immediately
+    queryInput.value = '';
+    
     // Disable form
     submitBtn.disabled = true;
     submitBtn.textContent = 'Sending...';
+    queryInput.disabled = true;
     
     // Add user message
     addMessage('user', query);
     chatHistory.push({ role: 'user', content: query });
+    
+    // Show "AI is thinking" indicator
+    const thinkingMessageId = addThinkingMessage();
     
     // Clear previous results
     sourcesDiv.innerHTML = '';
@@ -278,6 +295,9 @@ async function handleQuery(e) {
         
         const data = await response.json();
         
+        // Remove thinking indicator
+        removeThinkingMessage(thinkingMessageId);
+        
         if (data.error) {
             addMessage('assistant', `Error: ${data.error}`, 'text-red-600');
         } else {
@@ -294,12 +314,15 @@ async function handleQuery(e) {
             await loadChatSessions();
         }
     } catch (error) {
+        // Remove thinking indicator
+        removeThinkingMessage(thinkingMessageId);
         addMessage('assistant', `Error: ${error.message}`, 'text-red-600');
     } finally {
         // Re-enable form
         submitBtn.disabled = false;
         submitBtn.textContent = 'Send';
-        document.getElementById('query').value = '';
+        queryInput.disabled = false;
+        queryInput.focus();
     }
 }
 
@@ -324,6 +347,45 @@ function addMessage(role, content, scroll = true) {
     
     if (scroll) {
         chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+}
+
+function addThinkingMessage() {
+    // Remove placeholder if exists
+    const placeholder = chatMessages.querySelector('.text-center');
+    if (placeholder) placeholder.remove();
+    
+    const messageDiv = document.createElement('div');
+    messageDiv.className = 'flex justify-start';
+    messageDiv.id = 'thinking-message';
+    
+    const bubble = document.createElement('div');
+    bubble.className = 'max-w-[80%] rounded-lg px-4 py-2 bg-white border text-gray-800';
+    
+    // Create thinking indicator with animated dots
+    const thinkingText = document.createElement('span');
+    thinkingText.textContent = 'AI is thinking';
+    thinkingText.className = 'inline-block';
+    
+    const dots = document.createElement('span');
+    dots.id = 'thinking-dots';
+    dots.textContent = '...';
+    dots.className = 'inline-block animate-pulse';
+    
+    bubble.appendChild(thinkingText);
+    bubble.appendChild(dots);
+    messageDiv.appendChild(bubble);
+    chatMessages.appendChild(messageDiv);
+    
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+    
+    // Return the message div for later removal
+    return messageDiv;
+}
+
+function removeThinkingMessage(thinkingMessageDiv) {
+    if (thinkingMessageDiv && thinkingMessageDiv.parentNode) {
+        thinkingMessageDiv.remove();
     }
 }
 
