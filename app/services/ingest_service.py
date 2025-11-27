@@ -77,7 +77,7 @@ class IngestService:
             chunk_size=1024,
             chunk_overlap=200,
         )
-        self.markdown_node_parser = MarkdownNodeParser()
+        self.markdown_node_parser = MarkdownNodeParser() # Building a hierarchy of sections based on the header levels 
 
     async def process_file(
         self, kb_id: uuid.UUID, file_path: str, file_type: str
