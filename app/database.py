@@ -37,7 +37,7 @@ def get_db():
 
 def init_db() -> None:
     """Initialize database tables and pgvector extension."""
-    from app.models import knowledge_base, uploaded_file, embedding, chat_session
+    from app.models import knowledge_base, uploaded_file, embedding, chat_session, web_crawl_source
     
     logger.info("Initializing database...")
     

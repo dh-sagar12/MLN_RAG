@@ -21,6 +21,7 @@ class KnowledgeBase(Base):
     # Relationships
     files = relationship("UploadedFile", back_populates="knowledge_base", cascade="all, delete-orphan")
     embeddings = relationship("Embedding", back_populates="knowledge_base", cascade="all, delete-orphan")
+    web_crawl_sources = relationship("WebCrawlSource", back_populates="knowledge_base", cascade="all, delete-orphan")
     
     def __repr__(self) -> str:
         return f"<KnowledgeBase(id={self.id}, name={self.name})>"

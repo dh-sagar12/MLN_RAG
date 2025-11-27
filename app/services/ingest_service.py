@@ -1,17 +1,28 @@
 """Ingestion service for processing documents and creating embeddings."""
 
+import datetime
 import logging
 import asyncio
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
+from llama_index.core.schema import BaseNode
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 from llama_index.core import Document, Settings
-from llama_index.core.node_parser import SentenceSplitter
+from llama_index.core.node_parser import (
+    HTMLNodeParser,
+    SentenceSplitter,
+    MarkdownNodeParser,
+)
 from llama_index.embeddings.openai import OpenAIEmbedding
 from llama_index.vector_stores.postgres import PGVectorStore
 from llama_index.core import VectorStoreIndex
 from app.config import settings
-from app.models import KnowledgeBase, Embedding as EmbeddingModel, UploadedFile
+from app.models import (
+    KnowledgeBase,
+    Embedding as EmbeddingModel,
+    UploadedFile,
+    WebCrawlSource,
+)
 from app.services.file_service import FileService
 from app.database import SessionLocal
 import uuid
@@ -31,7 +42,15 @@ class IngestService:
         if settings.openai_api_key:
             # Clear proxy environment variables to avoid OpenAI client initialization issues
             import os
-            proxy_vars = ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy', 'ALL_PROXY', 'all_proxy']
+
+            proxy_vars = [
+                "HTTP_PROXY",
+                "HTTPS_PROXY",
+                "http_proxy",
+                "https_proxy",
+                "ALL_PROXY",
+                "all_proxy",
+            ]
             saved_proxies = {}
             for var in proxy_vars:
                 if var in os.environ:
@@ -40,9 +59,11 @@ class IngestService:
             try:
                 Settings.embed_model = OpenAIEmbedding(
                     model=settings.openai_embedding_model,
-                    api_key=settings.openai_api_key
+                    api_key=settings.openai_api_key,
                 )
-                logger.info(f"OpenAIEmbedding initialized with model: {settings.openai_embedding_model}")
+                logger.info(
+                    f"OpenAIEmbedding initialized with model: {settings.openai_embedding_model}"
+                )
             except Exception as e:
                 logger.error(f"Error initializing OpenAIEmbedding: {e}", exc_info=True)
                 raise
@@ -54,14 +75,12 @@ class IngestService:
         # Node parser
         self.node_parser = SentenceSplitter(
             chunk_size=1024,
-            chunk_overlap=200
+            chunk_overlap=200,
         )
+        self.markdown_node_parser = MarkdownNodeParser()
 
     async def process_file(
-        self,
-        kb_id: uuid.UUID,
-        file_path: str,
-        file_type: str
+        self, kb_id: uuid.UUID, file_path: str, file_type: str
     ) -> None:
         """Process a file and create embeddings.
 
@@ -84,8 +103,8 @@ class IngestService:
                 metadata={
                     "kb_id": str(kb_id),
                     "file_path": file_path,
-                    "file_type": file_type
-                }
+                    "file_type": file_type,
+                },
             )
 
             # Split into chunks
@@ -101,56 +120,146 @@ class IngestService:
                 # Get all embeddings (run in thread pool)
                 logger.info(f"Generating embeddings for {len(nodes)} chunks")
                 for idx, node in enumerate(nodes):
-                    logger.debug(f"Generating embedding for chunk {idx + 1}/{len(nodes)}")
-                    embedding_vector = await asyncio.to_thread(
-                        embed_model.get_text_embedding,
-                        node.get_content()
+                    logger.debug(
+                        f"Generating embedding for chunk {idx + 1}/{len(nodes)}"
                     )
-                    embeddings_data.append({
-                        "kb_id": kb_id,
-                        "chunk_text": node.get_content(),
-                        "embedding": embedding_vector,
-                        "chunk_metadata": {
-                            "node_id": node.node_id,
-                            "file_path": file_path,
-                            "file_type": file_type,
-                            **node.metadata
+                    embedding_vector = await asyncio.to_thread(
+                        embed_model.get_text_embedding, node.get_content()
+                    )
+                    embeddings_data.append(
+                        {
+                            "kb_id": kb_id,
+                            "chunk_text": node.get_content(),
+                            "embedding": embedding_vector,
+                            "chunk_metadata": {
+                                "node_id": node.node_id,
+                                "file_path": file_path,
+                                "file_type": file_type,
+                                **node.metadata,
+                            },
                         }
-                    })
+                    )
 
                 # Save all embeddings in one batch (create new session for thread safety)
                 if embeddings_data:
                     logger.info(f"Saving {len(embeddings_data)} embeddings to database")
-                    await asyncio.to_thread(self._save_embeddings_batch, embeddings_data)
+                    await asyncio.to_thread(
+                        self._save_embeddings_batch, embeddings_data
+                    )
                     logger.info(f"Successfully saved embeddings for file: {file_path}")
             else:
-                logger.warning("OpenAI API key not configured, skipping embedding generation")
+                logger.warning(
+                    "OpenAI API key not configured, skipping embedding generation"
+                )
         except Exception as e:
             logger.error(f"Error processing file {file_path}: {str(e)}", exc_info=True)
+            raise
+
+    async def process_markdown(
+        self,
+        kb_id: uuid.UUID,
+        markdown: str,
+        source: Optional[WebCrawlSource] = None,
+    ) -> None:
+        """Process HTML and create embeddings.
+
+        Args:
+            kb_id: Knowledge base ID
+            html: HTML content
+            file_type: File type
+        """
+        logger.info(f"Processing Markdown: {markdown[:100]} (KB: {kb_id}\n")
+
+        try:
+            # Create LlamaIndex document
+            doc = Document(
+                text=markdown,
+                metadata={
+                    "kb_id": str(kb_id),
+                    "url": source.url if source else None,
+                    "source_type": "web_crawl",
+                    "source_id": str(source.id) if source else None,
+                    "title": source.title if source else None,
+                    "created_at": datetime.datetime.now(datetime.UTC).isoformat(),
+                },
+            )
+            # Split into chunks
+            logger.debug(f"Splitting document into chunks")
+            nodes = self.markdown_node_parser.get_nodes_from_documents([doc])
+            logger.info(
+                f"Created {len(nodes)} chunks from Markdown: {markdown[:100]}\n"
+            )
+
+            if settings.openai_api_key:
+                embed_model = Settings.embed_model
+                embeddings_data = []
+
+                # Get all embeddings (run in thread pool)
+                logger.info(f"Generating embeddings for {len(nodes)} chunks!")
+                for idx, node in enumerate(nodes):
+                    logger.debug(
+                        f"Generating embedding for chunk {idx + 1}/{len(nodes)}"
+                    )
+                    with open("node.txt", "w") as f:
+                        f.write(node.get_content())
+
+                    embedding_vector = await asyncio.to_thread(
+                        embed_model.get_text_embedding, node.get_content()
+                    )
+                    embeddings_data.append(
+                        {
+                            "kb_id": kb_id,
+                            "chunk_text": node.get_content(),
+                            "embedding": embedding_vector,
+                            "chunk_metadata": {
+                                "node_id": node.node_id,
+                                "file_path": source.url if source else None,
+                                "file_type": "markdown",
+                                **node.metadata,
+                            },
+                        }
+                    )
+
+                # Save all embeddings in one batch (create new session for thread safety)
+                if embeddings_data:
+                    logger.info(f"Saving {len(embeddings_data)} embeddings to database")
+                    await asyncio.to_thread(
+                        self._save_embeddings_batch, embeddings_data
+                    )
+                    logger.info(
+                        f"Successfully saved embeddings for Source: {source.url}"
+                    )
+            else:
+                logger.warning(
+                    "OpenAI API key not configured, skipping embedding generation"
+                )
+
+        except Exception as e:
+
+            logger.error(
+                f"Error processing Markdown: {markdown[:100]}: {str(e)}", exc_info=True
+            )
             raise
 
     def _save_embeddings_batch(self, embeddings_data: List[Dict]) -> None:
         """Sync function to save multiple embeddings to database."""
         logger.debug(f"Saving batch of {len(embeddings_data)} embeddings to database")
         # Create new session for thread safety
-        db = SessionLocal()
         try:
             for emb_data in embeddings_data:
                 embedding = EmbeddingModel(
                     kb_id=emb_data["kb_id"],
                     chunk_text=emb_data["chunk_text"],
                     embedding=emb_data["embedding"],
-                    chunk_metadata=emb_data["chunk_metadata"]
+                    chunk_metadata=emb_data["chunk_metadata"],
                 )
-                db.add(embedding)
-            db.commit()
+                self.db.add(embedding)
+            self.db.commit()
             logger.debug(f"Successfully committed {len(embeddings_data)} embeddings")
         except Exception as e:
             logger.error(f"Error saving embeddings batch: {str(e)}", exc_info=True)
-            db.rollback()
+            self.db.rollback()
             raise
-        finally:
-            db.close()
 
     def get_vector_store(self) -> PGVectorStore:
         """Get or create PGVectorStore."""
@@ -173,9 +282,13 @@ class IngestService:
             logger.info(f"Processing file {idx}/{len(files)}: {file.file_name}")
             try:
                 await self.process_file(kb_id, file.file_path, file.file_type)
-                logger.info(f"Completed processing file {idx}/{len(files)}: {file.file_name}")
+                logger.info(
+                    f"Completed processing file {idx}/{len(files)}: {file.file_name}"
+                )
             except Exception as e:
-                logger.error(f"Failed to process file {file.file_name}: {str(e)}", exc_info=True)
+                logger.error(
+                    f"Failed to process file {file.file_name}: {str(e)}", exc_info=True
+                )
                 # Continue with next file
                 continue
 
