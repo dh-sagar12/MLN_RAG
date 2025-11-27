@@ -33,7 +33,7 @@
         <!-- Query Form -->
         <div class="p-4 border-t bg-white">
             <form id="query-form" class="space-y-3">
-                <div class="flex items-end space-x-2">
+                <div class="flex items-end space-x-2 flex-wrap">
                     <div class="flex-1">
                         <textarea id="query" name="query" rows="2" required
                                   class="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border resize-none"
@@ -49,6 +49,14 @@
                             <label for="history_k" class="block text-xs text-gray-600 mb-1">History</label>
                             <input type="number" id="history_k" name="history_k" value="10" min="0" max="50"
                                    class="block w-16 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-2 py-1 border">
+                        </div>
+                        <div>
+                            <label for="channel" class="block text-xs text-gray-600 mb-1">Channel</label>
+                            <select id="channel" name="channel"
+                                    class="block w-28 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-2 py-1 border">
+                                <option value="email" selected>Email</option>
+                                <option value="whatsapp">WhatsApp</option>
+                            </select>
                         </div>
                         <button type="submit" id="submit-btn"
                                 class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed">
@@ -79,6 +87,7 @@ const chatMessages = document.getElementById('chat-messages');
 const queryForm = document.getElementById('query-form');
 const submitBtn = document.getElementById('submit-btn');
 const queryTextarea = document.getElementById('query');
+const channelSelect = document.getElementById('channel');
 const chatSessionsDiv = document.getElementById('chat-sessions');
 const newChatBtn = document.getElementById('new-chat-btn');
 const chatTitle = document.getElementById('chat-title');
@@ -252,6 +261,7 @@ async function handleQuery(e) {
     const query = queryInput.value.trim();
     const topK = parseInt(document.getElementById('top_k').value) || 5;
     const historyK = parseInt(document.getElementById('history_k').value) || 10;
+    const channel = (channelSelect?.value || 'email').toLowerCase();
     
     if (!query) return;
     
@@ -289,7 +299,8 @@ async function handleQuery(e) {
                 query,
                 top_k: topK,
                 session_id: currentSessionId,
-                history_k: historyK
+                history_k: historyK,
+                channel,
             })
         });
         

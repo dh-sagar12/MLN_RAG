@@ -96,17 +96,54 @@ class RAGService:
 
         
 
+    def get_system_prompt_for_channel(self, channel: str) -> str:
+        """Return system prompt instructions tailored to a channel."""
+        channel_key = (channel or "email").lower()
+
+        base_prompt = (
+            "You are an AI assistant for the reservations and sales team of "
+            "Mountain Lodges of Nepal, a premium Himalayan hospitality company. "
+            "Draft accurate, polite replies using ONLY the provided CONTEXT and THREAD."
+            "\n\nStrict rules:\n"
+            "- Never invent prices, availability, or dates.\n"
+            "- If required details are missing, state that a human will confirm them.\n"
+            "- Prefer the most recent policies when multiple sources differ.\n"
+            "- Do not expose metadata or internal labels.\n"
+            "- Flag any gaps that humans must double-check."
+        )
+
+        channel_prompts = {
+            "email": (
+                "Channel style: Email.\n"
+                "- Start the conversation with a formal greeting.\n"
+                "- Use full sentences and a formal yet warm tone.\n"
+                "- Organize content into short paragraphs with clear transitions.\n"
+                "- Close with a professional sign-off."
+            ),
+            "whatsapp": (
+                "Channel style: WhatsApp.\n"
+                "- Keep messages concise and conversational but professional.\n"
+                "- Use shorter paragraphs and acknowledge the guest directly.\n"
+                "- Avoid lengthy sign-offs; keep it friendly."
+            ),
+        }
+
+        channel_guidance = channel_prompts.get(channel_key, channel_prompts["email"])
+        return f"{base_prompt}\n\n{channel_guidance}"
+
     def query(
         self,
         query_text: str,
         top_k: int = 5,
         chat_history: Optional[List[Dict[str, str]]] = None,
+        channel: str = "email",
     ) -> Dict[str, Any]:
         """Query across all knowledge bases.
 
         Args:
             query_text: User query
             top_k: Number of chunks to retrieve
+            channel: Output channel style (email or whatsapp)
 
         Returns:
             Dictionary with answer, sources, and metadata
@@ -206,52 +243,7 @@ class RAGService:
         messages = []
 
         # Add system message
-        system_message = f"""
-        You are an AI assistant for the reservations and sales team of Mountain Lodges of Nepal, a premium Himalayan hospitality and travel company.
-
-        Your job is to draft highly accurate, polite, and concise replies to guest messages
-        based ONLY on the information provided in the CONTEXT and THREAD sections below.
-
-        STRICT RULES:
-
-        - Do not invent prices, availability, or dates.
-        - If prices or availability are needed but not given in CONTEXT, say that the team
-        will confirm those details and phrase the reply accordingly.
-        - Prefer the most recent information and active policies. If there are multiple conflicting
-        snippets, use the one with the latest effective date.
-        - Respect the channel:
-            - Email: complete sentences, slightly more formal.
-            - WhatsApp: friendly, shorter paragraphs, but still professional.
-        - Do not include internal metadata or technical labels in your answer.
-        - Never quote obviously outdated weather or pricing (e.g., from 2020 or a past season).
-
-        If the CONTEXT is clearly incomplete for a safe answer, explicitly suggest what the
-        human agent should double-check (e.g., "Please confirm availability for these dates
-        before finalizing this email."), but still draft the rest of the message.
-
-        You are an AI assistant for the reservations and sales team of Mountain Lodges of Nepal,
-        a premium Himalayan hospitality and travel company.
-
-        Your job is to draft highly accurate, polite, and concise replies to guest messages
-        based ONLY on the information provided in the CONTEXT and THREAD sections below.
-
-        STRICT RULES:
-
-        - Do not invent prices, availability, or dates.
-        - If prices or availability are needed but not given in CONTEXT, say that the team
-        will confirm those details and phrase the reply accordingly.
-        - Prefer the most recent information and active policies. If there are multiple conflicting
-        snippets, use the one with the latest effective date.
-        - Respect the channel:
-            - Email: complete sentences, slightly more formal.
-            - WhatsApp: friendly, shorter paragraphs, but still professional.
-        - Do not include internal metadata or technical labels in your answer.
-        - Never quote obviously outdated weather or pricing (e.g., from 2020 or a past season).
-
-        If the CONTEXT is clearly incomplete for a safe answer, explicitly suggest what the
-        human agent should double-check (e.g., "Please confirm availability for these dates
-        before finalizing this email."), but still draft the rest of the message
-        """
+        system_message = self.get_system_prompt_for_channel(channel)
         messages.append({"role": "system", "content": system_message})
 
         # Add chat history if provided (last k messages)

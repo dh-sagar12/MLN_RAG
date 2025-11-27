@@ -108,7 +108,11 @@ def _delete_chat_session_sync(session_id: str):
 
 
 def _query_with_history_sync(
-    query_text: str, top_k: int, session_id: str = None, history_k: int = 10
+    query_text: str,
+    top_k: int,
+    session_id: str = None,
+    history_k: int = 10,
+    channel: str = "email",
 ):
     """Sync function to query RAG system with chat history."""
     db = next(get_db())
@@ -123,6 +127,7 @@ def _query_with_history_sync(
             query_text=query_text,
             top_k=top_k,
             chat_history=chat_history,
+            channel=channel,
         )
         return result
     finally:
@@ -242,9 +247,10 @@ async def query_api(request: Request) -> JSONResponse:
         top_k = body.get("top_k", 5)
         session_id = body.get("session_id")
         history_k = body.get("history_k", 10)  # Number of previous messages to include
+        channel = (body.get("channel") or "email").lower()
 
         logger.info(
-            f"Query API request: query='{query_text[:50]}...', session_id={session_id}, top_k={top_k}, history_k={history_k}"
+            f"Query API request: query='{query_text[:50]}...', session_id={session_id}, top_k={top_k}, history_k={history_k}, channel={channel}"
         )
 
         if not query_text:
@@ -254,7 +260,7 @@ async def query_api(request: Request) -> JSONResponse:
         # Execute query with history
         logger.debug("Executing query in thread pool...")
         result = await asyncio.to_thread(
-            _query_with_history_sync, query_text, top_k, session_id, history_k
+            _query_with_history_sync, query_text, top_k, session_id, history_k, channel
         )
 
         # Save messages to database if session_id provided
