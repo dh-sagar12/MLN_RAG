@@ -16,17 +16,17 @@
     
     <!-- Upload File Form -->
     <div class="bg-white rounded-lg shadow p-6">
-        <h2 class="text-xl font-semibold mb-4">Upload Document</h2>
+        <h2 class="text-xl font-semibold mb-4">Upload Documents</h2>
         <form method="POST" action="/kb/{{ kb.id }}/upload" enctype="multipart/form-data" class="space-y-4">
             <div>
-                <label for="file" class="block text-sm font-medium text-gray-700">File</label>
-                <input type="file" id="file" name="file" required accept=".pdf,.txt,.docx,.pptx,.md,.html"
+                <label for="file" class="block text-sm font-medium text-gray-700">Files</label>
+                <input type="file" id="file" name="files" multiple required accept=".pdf,.txt,.docx,.pptx,.md,.html"
                        class="mt-1 block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100">
-                <p class="mt-1 text-xs text-gray-500">Supported formats: PDF, TXT, DOCX, PPTX, MD, HTML</p>
+                <p class="mt-1 text-xs text-gray-500">Supported formats: PDF, TXT, DOCX, PPTX, MD, HTML. You can select multiple files.</p>
             </div>
             <button type="submit"
                     class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
-                Upload & Process
+                Upload & Process Files
             </button>
         </form>
     </div>
@@ -151,7 +151,11 @@
                         <div>
                             <p class="text-sm font-medium text-gray-900">{{ file.file_name }}</p>
                             <p class="text-xs text-gray-500 mt-1">
-                                Type: {{ file.file_type }} | Size: {{ (file.file_size / 1024) | round(2) }} KB
+                                Status: 
+                                <span class="{% if file.status == 'COMPLETED' %}text-green-600{% elif file.status == 'FAILED' %}text-red-600{% elif file.status == 'PROCESSING' %}text-yellow-600{% else %}text-gray-600{% endif %}">
+                                    {{ file.status }}
+                                </span>
+                                | Type: {{ file.file_type }} | Size: {{ (file.file_size / 1024) | round(2) }} KB
                             </p>
                             <p class="text-xs text-gray-400 mt-1">
                                 Uploaded: {{ file.created_at.strftime('%Y-%m-%d %H:%M') }}

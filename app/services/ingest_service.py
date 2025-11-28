@@ -7,7 +7,7 @@ from typing import List, Dict, Any, Optional
 from llama_index.core.schema import BaseNode
 from sqlalchemy.orm import Session
 from sqlalchemy import select
-from llama_index.core import Document, Settings
+from llama_index.core import Document, Settings, SimpleDirectoryReader
 from llama_index.core.node_parser import (
     SentenceSplitter,
     MarkdownNodeParser,
@@ -101,6 +101,84 @@ class IngestService:
         #     llm=self.llm,
         # )
 
+    def _update_file_status(self, file_path: str, status: str) -> None:
+        """Update status of uploaded file."""
+        try:
+            stmt = select(UploadedFile).where(UploadedFile.file_path == file_path)
+            result = self.db.execute(stmt)
+            file = result.scalar_one_or_none()
+            if file:
+                file.status = status
+                self.db.commit()
+        except Exception as e:
+            logger.error(f"Error updating file status for {file_path}: {e}")
+            self.db.rollback()
+
+    async def process_multiple_files(
+        self,
+        kb_id: uuid.UUID,
+        file_paths: List[str],
+    ) -> None:
+        """Process multiple files using SimpleDirectoryReader.
+
+        Args:
+            kb_id: Knowledge base ID
+            file_paths: List of file paths to process
+        """
+        logger.info(f"Processing {len(file_paths)} files for KB: {kb_id}")
+
+        # Update status to PROCESSING
+        for path in file_paths:
+            await asyncio.to_thread(self._update_file_status, path, "PROCESSING")
+
+        try:
+            # Use SimpleDirectoryReader to load data
+            reader = SimpleDirectoryReader(input_files=file_paths)
+            documents = await asyncio.to_thread(reader.load_data)
+            
+            logger.info(f"Loaded {len(documents)} documents from {len(file_paths)} files")
+
+            # Update metadata
+            for doc in documents:
+                doc.metadata.update({
+                    "kb_id": str(kb_id),
+                    "source_type": "document_upload",
+                    "created_at": datetime.datetime.now(datetime.UTC).isoformat(),
+                })
+                # Ensure file_path is preserved (SimpleDirectoryReader puts it in metadata)
+                if "file_path" not in doc.metadata:
+                    # Fallback if needed, though SimpleDirectoryReader usually adds it
+                    pass
+
+            # Build pipeline
+            transformations = [self.node_parser]
+            if self.embed_model:
+                transformations.append(self.embed_model)
+
+            pipeline = IngestionPipeline(transformations=transformations)
+
+            logger.info("Running IngestionPipeline for batch...")
+            nodes = await pipeline.arun(documents=documents)
+            logger.info(f"Pipeline generated {len(nodes)} nodes with embeddings")
+
+            if nodes:
+                await self._save_nodes_to_db(nodes, kb_id)
+                # Update status to COMPLETED
+                for path in file_paths:
+                    await asyncio.to_thread(self._update_file_status, path, "COMPLETED")
+            else:
+                logger.warning("No nodes generated from batch")
+                # Should we mark as failed? Maybe not.
+                for path in file_paths:
+                    await asyncio.to_thread(self._update_file_status, path, "COMPLETED")
+
+        except Exception as e:
+            logger.error(f"Error processing batch: {str(e)}", exc_info=True)
+            # Update status to FAILED
+            for path in file_paths:
+                await asyncio.to_thread(self._update_file_status, path, "FAILED")
+            raise
+
     async def process_file(
         self,
         kb_id: uuid.UUID,
@@ -115,6 +193,7 @@ class IngestService:
             file_type: File type
         """
         logger.info(f"Processing file: {file_path} (KB: {kb_id}, Type: {file_type})")
+        await asyncio.to_thread(self._update_file_status, file_path, "PROCESSING")
 
         try:
             # Extract text (async file I/O)
@@ -161,11 +240,14 @@ class IngestService:
             if nodes:
                 await self._save_nodes_to_db(nodes, kb_id)
                 logger.info(f"Successfully saved embeddings for file: {file_path}")
+                await asyncio.to_thread(self._update_file_status, file_path, "COMPLETED")
             else:
                 logger.warning("No nodes generated from pipeline")
+                await asyncio.to_thread(self._update_file_status, file_path, "COMPLETED")
 
         except Exception as e:
             logger.error(f"Error processing file {file_path}: {str(e)}", exc_info=True)
+            await asyncio.to_thread(self._update_file_status, file_path, "FAILED")
             raise
 
     async def process_markdown(
@@ -315,7 +397,7 @@ class IngestService:
         for idx, file in enumerate(files, 1):
             logger.info(f"Processing file {idx}/{len(files)}: {file.file_name}")
             try:
-                await self.process_file(kb_id, file.file_path, file.file_type)
+                await self.process_file(kb_id=kb_id, file_path=file.file_path, file_type=file.file_type)
                 logger.info(
                     f"Completed processing file {idx}/{len(files)}: {file.file_name}"
                 )

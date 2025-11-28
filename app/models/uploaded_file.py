@@ -15,9 +15,10 @@ class UploadedFile(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     kb_id = Column(UUID(as_uuid=True), ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False)
     file_name = Column(String(255), nullable=False)
-    file_type = Column(String(50), nullable=False)
+    file_type = Column(String(255), nullable=False)
     file_size = Column(Integer, nullable=False)
     file_path = Column(String(500), nullable=False)
+    status = Column(String(50), default="PENDING", nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     
     # Relationships
