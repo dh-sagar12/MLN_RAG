@@ -13,7 +13,12 @@ from llama_index.core.node_parser import (
     MarkdownNodeParser,
 )
 from llama_index.core.ingestion import IngestionPipeline
+from llama_index.core.extractors import (
+    TitleExtractor,
+    QuestionsAnsweredExtractor,
+)
 from llama_index.embeddings.openai import OpenAIEmbedding
+from llama_index.llms.openai import OpenAI
 from app.config import settings
 from app.models import (
     Embedding as EmbeddingModel,
@@ -33,6 +38,7 @@ class IngestService:
         self.db = db
         self.file_service = FileService()
         self.embed_model = None
+        self.llm = None
 
         # Initialize LlamaIndex settings
         if settings.openai_api_key:
@@ -58,11 +64,19 @@ class IngestService:
                     api_key=settings.openai_api_key,
                 )
                 Settings.embed_model = self.embed_model
+
+                self.llm = OpenAI(
+                    model=settings.openai_llm_model,
+                    api_key=settings.openai_api_key,
+                    temperature=settings.temperature,
+                )
+                Settings.llm = self.llm
+
                 logger.info(
-                    f"OpenAIEmbedding initialized with model: {settings.openai_embedding_model}"
+                    f"OpenAI initialized (Embedding: {settings.openai_embedding_model}, LLM: {settings.openai_llm_model})"
                 )
             except Exception as e:
-                logger.error(f"Error initializing OpenAIEmbedding: {e}", exc_info=True)
+                logger.error(f"Error initializing OpenAI clients: {e}", exc_info=True)
                 raise
             finally:
                 # Restore proxy environment variables
@@ -75,6 +89,17 @@ class IngestService:
             chunk_overlap=200,
         )
         self.markdown_node_parser = MarkdownNodeParser()
+
+        # Metadata Extractors (We can use different Extractor if necessary)
+
+        # self.title_extractor = TitleExtractor(
+        #     nodes=5,
+        #     llm=self.llm,
+        # )
+        # self.questions_extractor = QuestionsAnsweredExtractor(
+        #     questions=3,
+        #     llm=self.llm,
+        # )
 
     async def process_file(
         self,
@@ -111,10 +136,22 @@ class IngestService:
 
             # Build and run pipeline
             transformations = [self.node_parser]
+
+            # Add extractors if LLM is available
+            # if self.llm:
+            #     transformations.extend(
+            #         [
+            #             self.title_extractor,
+            #             self.questions_extractor,
+            #         ]
+            #     )
+
             if self.embed_model:
                 transformations.append(self.embed_model)
 
-            pipeline = IngestionPipeline(transformations=transformations)
+            pipeline = IngestionPipeline(
+                transformations=transformations,
+            )
 
             logger.info("Running IngestionPipeline for file...")
             nodes = await pipeline.arun(documents=[doc])
@@ -163,10 +200,22 @@ class IngestService:
 
             # Build and run pipeline
             transformations = [self.markdown_node_parser]
+
+            # Add extractors if LLM is available
+            # if self.llm:
+            #     transformations.extend(
+            #         [
+            #             self.title_extractor,
+            #             self.questions_extractor,
+            #         ]
+            #     )
+
             if self.embed_model:
                 transformations.append(self.embed_model)
 
-            pipeline = IngestionPipeline(transformations=transformations)
+            pipeline = IngestionPipeline(
+                transformations=transformations,
+            )
 
             logger.info("Running IngestionPipeline for markdown...")
             nodes = await pipeline.arun(documents=[doc])
@@ -174,7 +223,10 @@ class IngestService:
 
             # Save embeddings to database
             if nodes:
-                await self._save_nodes_to_db(nodes, kb_id)
+                await self._save_nodes_to_db(
+                    nodes=nodes,
+                    kb_id=kb_id,
+                )
                 logger.info(
                     f"Successfully saved embeddings for Source: {source.url if source else 'Unknown'}"
                 )
