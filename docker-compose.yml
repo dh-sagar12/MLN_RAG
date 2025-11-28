@@ -1,0 +1,13 @@
+services:
+  web:
+    image: sagardhakal/mln:${VERSION}
+    container_name: mln
+    restart: unless-stopped
+    network_mode: "host"
+    env_file:
+      - .env
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    volumes:
+      - ./logs:/app/logs
