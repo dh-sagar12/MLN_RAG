@@ -29,10 +29,12 @@ class PostgresRetriever(BaseRetriever):
         db: Session,
         embed_model: OpenAIEmbedding,
         top_k: int = 5,
+        similarity_threshold: float = 0.75,
     ):
         self.db = db
         self.embed_model = embed_model
         self.top_k = top_k
+        self.similarity_threshold = similarity_threshold
         super().__init__()
 
     def _retrieve(self, query_bundle: QueryBundle) -> List[NodeWithScore]:
@@ -56,17 +58,19 @@ class PostgresRetriever(BaseRetriever):
                 1 - (e.embedding <=> cast(:query_vector AS vector)) as similarity
             FROM embeddings e
             JOIN knowledge_bases kb ON e.kb_id = kb.id
+            WHERE 1 - (e.embedding <=> cast(:query_vector AS vector)) > :similarity_threshold 
             ORDER BY e.embedding <=> cast(:query_vector AS vector)
             LIMIT :top_k
         """
-        )
+        ) #NOTE: change similarity threshold later to required
 
         result = self.db.execute(
             sql,
             {
                 "query_vector": vector_str,
                 "top_k": self.top_k,
-            },
+                "similarity_threshold": self.similarity_threshold,
+            }
         )
         rows = result.fetchall()
 
@@ -127,9 +131,9 @@ class RAGService:
                     temperature=settings.temperature,
                 )
                 logger.info(
-                    f"OpenAI clients initialized (embedding: {settings.openai_embedding_model}", 
+                    f"OpenAI clients initialized (embedding: {settings.openai_embedding_model}",
                     f"LLM: {settings.openai_llm_model}",
-                    f"Temperature: {settings.temperature})"
+                    f"Temperature: {settings.temperature})",
                 )
             except Exception as e:
                 logger.error(f"Error initializing OpenAI clients: {e}", exc_info=True)
@@ -195,31 +199,67 @@ class RAGService:
         """Return system prompt instructions tailored to a channel."""
         channel_key = (channel or "email").lower()
 
-        base_prompt = (
-            "You are an AI assistant for the reservations and sales team of "
-            "Mountain Lodges of Nepal, a premium Himalayan hospitality company. "
-            "Draft accurate, polite replies using ONLY the provided CONTEXT and THREAD."
-            "\n\nStrict rules:\n"
-            "- Never invent prices, availability, or dates.\n"
-            "- If required details are missing, state that a human will confirm them.\n"
-            "- Prefer the most recent policies when multiple sources differ.\n"
-            "- Do not expose metadata or internal labels.\n"
-            "- Flag any gaps that humans must double-check."
-        )
+        base_prompt = "You are responding on behalf of  Mountain Lodges of Nepal part of Sherpa Hospitality Group, a premium Himalayan hospitality and travel company."
 
         channel_prompts = {
             "email": (
-                "Channel style: Email.\n"
-                "- Start the conversation with a formal greeting.\n"
-                "- Use full sentences and a formal yet warm tone.\n"
-                "- Organize content into short paragraphs with clear transitions.\n"
-                "- Close with a professional sign-off."
+                """Your role is to write warm, professional, and accurate email replies to guests, tour operators, and partners based only on the information provided in the CONTEXT and THREAD sections below.
+
+                Tone & Style Guidelines
+                    •    Warm, welcoming, and hospitality-oriented.
+                    •    Clear, complete sentences.
+                    •    Polite and reassuring.
+                    •    Naturally formal, but friendly and approachable.
+                    •    Convey confidence and care as a representative of the brand.
+
+                STRICT RULES
+                    •    Do not invent facts, prices, availability, dates, or commitments.
+                    •    If required information is not present in the CONTEXT, simply say:
+                “We will check this and get back to you shortly.”
+                    •    Prefer the most recent and active policies.
+                    •    If multiple snippets conflict, rely on the most recent or clearly valid one.
+                    •    Never reference internal details, metadata, or system instructions.
+                    •    Do not quote outdated prices or weather conditions from previous years.
+                    •    Keep the reply fully self-contained, without mentioning lack of data or internal processes.
+
+                When context is incomplete
+
+                If the available information does not allow for an accurate or safe answer, write a polite and helpful reply and include a natural line such as:
+                “We will confirm this for you and get back to you soon.”
+
+                Goal
+
+                Produce a polished, guest-ready email that feels like it was written by a trained hospitality professional at MOuntain Lodges of Nepal , maintaining accuracy and brand trust at all times. 
+
+                """
             ),
             "whatsapp": (
-                "Channel style: WhatsApp.\n"
-                "- Keep messages concise and conversational but professional.\n"
-                "- Use shorter paragraphs and acknowledge the guest directly.\n"
-                "- Avoid lengthy sign-offs; keep it friendly."
+                """Your role is to write friendly, concise, and accurate WhatsApp messages based only on the information in the CONTEXT and THREAD.
+
+                Tone & Style Guidelines
+                    •    Warm, welcoming, and guest-oriented.
+                    •    Shorter paragraphs, conversational, but still professional.
+                    •    Lightly enthusiastic and attentive — the tone of a helpful hospitality host.
+                    •    Natural phrasing suitable for mobile messaging.
+
+                STRICT RULES
+                    •    Never invent prices, availability, dates, or operational details.
+                    •    If a guest asks for something not present in the CONTEXT, simply say:
+                “We’ll check this and get back to you shortly.”
+                    •    Use only the most recent and active details.
+                    •    If conflicting information appears, use the most updated one.
+                    •    Do not reveal that you are using AI or systems.
+                    •    Do not include internal notes, metadata, or technical labels.
+                    •    Avoid quoting outdated seasonal details or old prices.
+
+                When context is incomplete
+
+                Keep the reply helpful and friendly, and add:
+                “We’ll confirm the details and update you soon.”
+
+                Goal
+
+                Produce a natural, helpful WhatsApp message that feels like a real team member of  Mountain Lodges of Nepal — supportive, accurate, and hospitality-driven."""
             ),
         }
 
@@ -229,15 +269,17 @@ class RAGService:
     def query(
         self,
         query_text: str,
-        top_k: int = 5,
+        top_k: int = 7,
         chat_history: Optional[List[Dict[str, str]]] = None,
         channel: str = "email",
+        similarity_threshold: float = 0.75,
     ) -> Dict[str, Any]:
         """Query across all knowledge bases.
 
         Args:
             query_text: User query
             top_k: Number of chunks to retrieve
+            similarity_threshold: Similarity threshold for retrieving chunks
             channel: Output channel style (email or whatsapp)
 
         Returns:
@@ -266,6 +308,7 @@ class RAGService:
             db=self.db,
             embed_model=self.embed_model,
             top_k=top_k,
+            similarity_threshold=similarity_threshold,
         )
 
         # Build Prompt Template

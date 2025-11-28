@@ -42,12 +42,12 @@
                     <div class="flex items-center space-x-2">
                         <div>
                             <label for="top_k" class="block text-xs text-gray-600 mb-1">Top K</label>
-                            <input type="number" id="top_k" name="top_k" value="5" min="1" max="20"
+                            <input type="number" id="top_k" name="top_k" value="7" min="1" max="20"
                                    class="block w-16 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-2 py-1 border">
                         </div>
                         <div>
                             <label for="history_k" class="block text-xs text-gray-600 mb-1">History</label>
-                            <input type="number" id="history_k" name="history_k" value="10" min="0" max="50"
+                            <input type="number" id="history_k" name="history_k" value="20" min="0" max="50"
                                    class="block w-16 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-2 py-1 border">
                         </div>
                         <div>
@@ -259,8 +259,8 @@ async function handleQuery(e) {
     
     const queryInput = document.getElementById('query');
     const query = queryInput.value.trim();
-    const topK = parseInt(document.getElementById('top_k').value) || 5;
-    const historyK = parseInt(document.getElementById('history_k').value) || 10;
+    const topK = parseInt(document.getElementById('top_k').value) || 7;
+    const historyK = parseInt(document.getElementById('history_k').value) || 20;
     const channel = (channelSelect?.value || 'email').toLowerCase();
     
     if (!query) return;

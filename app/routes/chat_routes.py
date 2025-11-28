@@ -113,6 +113,7 @@ def _query_with_history_sync(
     session_id: str = None,
     history_k: int = 10,
     channel: str = "email",
+    similarity_threshold: float = 0.75,
 ):
     """Sync function to query RAG system with chat history."""
     db = next(get_db())
@@ -128,6 +129,7 @@ def _query_with_history_sync(
             top_k=top_k,
             chat_history=chat_history,
             channel=channel,
+            similarity_threshold=similarity_threshold,
         )
         return result
     finally:
@@ -248,7 +250,7 @@ async def query_api(request: Request) -> JSONResponse:
         session_id = body.get("session_id")
         history_k = body.get("history_k", 10)  # Number of previous messages to include
         channel = (body.get("channel") or "email").lower()
-
+        similarity_threshold = body.get("similarity_threshold", 0.75)
         logger.info(
             f"Query API request: query='{query_text[:50]}...', session_id={session_id}, top_k={top_k}, history_k={history_k}, channel={channel}"
         )
@@ -260,7 +262,13 @@ async def query_api(request: Request) -> JSONResponse:
         # Execute query with history
         logger.debug("Executing query in thread pool...")
         result = await asyncio.to_thread(
-            _query_with_history_sync, query_text, top_k, session_id, history_k, channel
+            _query_with_history_sync,
+            query_text,
+            top_k,
+            session_id,
+            history_k,
+            channel,
+            similarity_threshold,
         )
 
         # Save messages to database if session_id provided
