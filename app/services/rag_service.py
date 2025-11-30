@@ -16,6 +16,7 @@ from llama_index.core.llms import ChatMessage as LlamaChatMessage
 from app.config import settings
 from app.services.performance_tracker import get_performance_tracker, PerformanceTracker
 import asyncio
+from app.services.prompt import ENHANCED_QUERY_PROMPT
 from app.services.retriever import PostgresRetriever
 
 
@@ -92,18 +93,7 @@ class RAGService:
         if not self.llm:
             return query_text
 
-        SYSTEM_PROMPT = """
-            You generate precise semantic-search queries for a vector database.
-
-            Your goal:
-            - Use conversation history ONLY to resolve context and references.
-            - Base the enhanced query STRICTLY on the user's latest question.
-            - Do NOT add information the user did not ask for.
-            - Do NOT answer the question.
-            - Output exactly one concise semantic-search query.
-            - Keep it short, factual, and focused on the latest request.
-            - Give reponse on Markdown Format with proper spacing and formatting.
-        """
+        SYSTEM_PROMPT = ENHANCED_QUERY_PROMPT
 
         # Build combined history text for context resolution
         history_text = ""
@@ -176,7 +166,8 @@ class RAGService:
                 """
             ),
             "whatsapp": (
-                """Your role is to write friendly, concise, and accurate WhatsApp messages based only on the information in the CONTEXT and THREAD.
+                """.
+                Your role is to write friendly, concise, and accurate WhatsApp replies to guests, tour operators, and partners based only on the information provided in the CONTEXT and THREAD sections below
 
                 Tone & Style Guidelines
                     •    Warm, welcoming, and guest-oriented.
@@ -241,6 +232,8 @@ class RAGService:
                 logger.warning(
                     "OpenAI API key not configured, returning error response"
                 )
+                
+                #PERFORMANCE TRACKING: Record error
                 if self.performance_tracker and request_id:
                     self.performance_tracker.record_error(
                         request_id,
@@ -291,7 +284,6 @@ class RAGService:
             # Build Prompt Template
             prompt_construction_start = time.perf_counter()
             system_message = self.get_system_prompt_for_channel(channel)
-
             # We need to include chat history in the prompt if provided
             history_context = ""
             if chat_history:
