@@ -6,6 +6,7 @@ from starlette.responses import HTMLResponse, JSONResponse, StreamingResponse
 from starlette.requests import Request
 from sqlalchemy import select, desc
 from app.database import get_db
+from app.services.config_service import ConfigService
 from app.services.rag_service import RAGService
 from app.models import ChatSession, ChatMessage
 from app.templates import templates
@@ -75,7 +76,10 @@ def _save_message_sync(session_id: str, role: str, content: str):
         db.close()
 
 
-def _get_chat_history_sync(session_id: str, k: int = 10):
+def _get_chat_history_sync(
+    session_id: str,
+    k: int = 20,
+):
     """Sync function to get last k messages from chat history."""
     db = next(get_db())
     try:
@@ -111,9 +115,9 @@ def _query_with_history_sync(
     query_text: str,
     top_k: int,
     session_id: str = None,
-    history_k: int = 10,
+    history_k: int = None,
     channel: str = "email",
-    similarity_threshold: float = 0.75,
+    similarity_threshold: float = None,
 ):
     """Sync function to query RAG system with chat history."""
     db = next(get_db())
@@ -246,11 +250,11 @@ async def query_api(request: Request) -> JSONResponse:
     try:
         body = await request.json()
         query_text = body.get("query", "").strip()
-        top_k = body.get("top_k", 5)
+        top_k = body.get("top_k")
         session_id = body.get("session_id")
-        history_k = body.get("history_k", 10)  # Number of previous messages to include
+        history_k = body.get("history_k")  # Number of previous messages to include
         channel = (body.get("channel") or "email").lower()
-        similarity_threshold = body.get("similarity_threshold", 0.75)
+        similarity_threshold = body.get("similarity_threshold")
         logger.info(
             f"Query API request: query='{query_text[:50]}...', session_id={session_id}, top_k={top_k}, history_k={history_k}, channel={channel}"
         )

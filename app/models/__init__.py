@@ -5,6 +5,7 @@ from app.models.uploaded_file import UploadedFile
 from app.models.embedding import Embedding
 from app.models.chat_session import ChatSession, ChatMessage
 from app.models.web_crawl_source import WebCrawlSource
+from app.models.configuration import Configuration
 
 __all__ = [
     "KnowledgeBase",
@@ -13,4 +14,5 @@ __all__ = [
     "ChatSession",
     "ChatMessage",
     "WebCrawlSource",
+    "Configuration",
 ]

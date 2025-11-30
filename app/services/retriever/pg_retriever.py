@@ -9,6 +9,8 @@ from typing import List, Optional, TYPE_CHECKING
 
 from llama_index.core.schema import NodeWithScore, TextNode
 
+from app.services.config_service import ConfigService
+
 if TYPE_CHECKING:
     from app.services.performance_tracker import PerformanceTracker
 
@@ -22,11 +24,10 @@ class PostgresRetriever(BaseRetriever):
         self,
         db: Session,
         embed_model: OpenAIEmbedding,
-        top_k: int = 50,
-        similarity_threshold: float = 0.75,
+        top_k: int,
+        similarity_threshold: float,
         performance_tracker: Optional["PerformanceTracker"] = None,
         request_id: Optional[str] = None,
-        ef_search: int = 256,
     ):
         self.db = db
         self.embed_model = embed_model
@@ -34,7 +35,7 @@ class PostgresRetriever(BaseRetriever):
         self.similarity_threshold = similarity_threshold
         self.performance_tracker = performance_tracker
         self.request_id = request_id
-        self.ef_search = 256
+        self.ef_search = ConfigService.get_retriever_config(db)["vector"]["ef_search"]
         super().__init__()
 
     def _retrieve(self, query_bundle: QueryBundle) -> List[NodeWithScore]:

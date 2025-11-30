@@ -7,6 +7,8 @@ from llama_index.core.schema import NodeWithScore, TextNode
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.services.config_service import ConfigService
+
 if TYPE_CHECKING:
     from app.services.performance_tracker import PerformanceTracker
 
@@ -19,14 +21,12 @@ class BM25Retriever(BaseRetriever):
     def __init__(
         self,
         db: Session,
-        top_k: int = 50,
-        language: str = "english",
         performance_tracker: Optional["PerformanceTracker"] = None,
         request_id: Optional[str] = None,
     ):
         self.db = db
-        self.top_k = top_k
-        self.language = language
+        self.top_k = ConfigService.get_retriever_config(db)["bm25"]["top_k"]
+        self.language = ConfigService.get_retriever_config(db)["bm25"]["language"]
         self.performance_tracker = performance_tracker
         self.request_id = request_id
         super().__init__()

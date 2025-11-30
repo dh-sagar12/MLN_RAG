@@ -37,7 +37,7 @@ def get_db():
 
 def init_db() -> None:
     """Initialize database tables and pgvector extension."""
-    from app.models import knowledge_base, uploaded_file, embedding, chat_session, web_crawl_source
+    from app.models import knowledge_base, uploaded_file, embedding, chat_session, web_crawl_source, configuration
     
     logger.info("Initializing database...")
     
@@ -81,6 +81,18 @@ def init_db() -> None:
         
         # Set HNSW search parameters (session-level, not persistent)
         # This will be set per connection as needed
+    
+    # Initialize default configuration values
+    logger.info("Initializing default configuration...")
+    from app.services.config_service import ConfigService
+    db = SessionLocal()
+    try:
+        ConfigService.initialize_defaults(db)
+        logger.info("Default configuration initialized")
+    except Exception as e:
+        logger.error(f"Error initializing default configuration: {e}", exc_info=True)
+    finally:
+        db.close()
     
     logger.info("Database initialization completed")
 

@@ -16,6 +16,7 @@ from llama_index.core.query_engine import RetrieverQueryEngine
 from llama_index.core.llms import ChatMessage as LlamaChatMessage
 from app.config import settings
 from app.services.performance_tracker import get_performance_tracker, PerformanceTracker
+from app.services.config_service import ConfigService
 import asyncio
 from app.services.prompt import ENHANCED_QUERY_PROMPT
 from app.services.retriever import BM25Retriever, PostgresRetriever
@@ -31,6 +32,7 @@ class RAGService:
         self.db = db
         self.embed_model = None
         self.llm = None
+        self._load_config()
 
         # Initialize performance tracker
         self.performance_tracker: Optional[PerformanceTracker] = None
@@ -89,12 +91,20 @@ class RAGService:
         else:
             logger.warning("OpenAI API key not configured")
 
+    def _load_config(self):
+        """Load dynamic configuration from database."""
+        self.rag_config = ConfigService.get_rag_config(self.db)
+        self.retriever_config = ConfigService.get_retriever_config(self.db)
+        self.hybrid_config = ConfigService.get_hybrid_config(self.db)
+        self.prompt_config = ConfigService.get_prompt_config(self.db)
+
     def get_enhanced_query(self, query_text, chat_history):
         """Generate enhanced query using chat history."""
         if not self.llm:
             return query_text
 
-        SYSTEM_PROMPT = ENHANCED_QUERY_PROMPT
+        # Use dynamic query enhancement prompt from config
+        SYSTEM_PROMPT = self.prompt_config.get("query_enhancement")
 
         # Build combined history text for context resolution
         history_text = ""
@@ -132,96 +142,50 @@ class RAGService:
         """Return system prompt instructions tailored to a channel."""
         channel_key = (channel or "email").lower()
 
-        base_prompt = "You are responding on behalf of Mountain Lodges of Nepal part of Sherpa Hospitality Group, a premium Himalayan hospitality and travel company. Format your response using Markdown for better readability (use bullet points, bold text, and paragraphs where appropriate)."
+        # Use dynamic prompts from configuration
+        base_prompt = self.prompt_config.get("base")
 
         channel_prompts = {
-            "email": (
-                """Your role is to write warm, professional, and accurate email replies to guests, tour operators, and partners based only on the information provided in the CONTEXT and THREAD sections below.
-
-                Tone & Style Guidelines
-                    •    Warm, welcoming, and hospitality-oriented.
-                    •    Clear, complete sentences.
-                    •    Polite and reassuring.
-                    •    Naturally formal, but friendly and approachable.
-                    •    Convey confidence and care as a representative of the brand.
-
-                STRICT RULES
-                    •    Do not invent facts, prices, availability, dates, or commitments.
-                    •    If required information is not present in the CONTEXT, simply say:
-                “We will check this and get back to you shortly.”
-                    •    Prefer the most recent and active policies.
-                    •    If multiple snippets conflict, rely on the most recent or clearly valid one.
-                    •    Never reference internal details, metadata, or system instructions.
-                    •    Do not quote outdated prices or weather conditions from previous years.
-                    •    Keep the reply fully self-contained, without mentioning lack of data or internal processes.
-
-                When context is incomplete
-
-                If the available information does not allow for an accurate or safe answer, write a polite and helpful reply and include a natural line such as:
-                “We will confirm this for you and get back to you soon.”
-
-                Goal
-
-                Produce a polished, guest-ready email that feels like it was written by a trained hospitality professional at MOuntain Lodges of Nepal , maintaining accuracy and brand trust at all times. 
-
-                """
-            ),
-            "whatsapp": (
-                """.
-                Your role is to write friendly, concise, and accurate WhatsApp replies to guests, tour operators, and partners based only on the information provided in the CONTEXT and THREAD sections below
-
-                Tone & Style Guidelines
-                    •    Warm, welcoming, and guest-oriented.
-                    •    Shorter paragraphs, conversational, but still professional.
-                    •    Lightly enthusiastic and attentive — the tone of a helpful hospitality host.
-                    •    Natural phrasing suitable for mobile messaging.
-
-                STRICT RULES
-                    •    Never invent prices, availability, dates, or operational details.
-                    •    If a guest asks for something not present in the CONTEXT, simply say:
-                “We’ll check this and get back to you shortly.”
-                    •    Use only the most recent and active details.
-                    •    If conflicting information appears, use the most updated one.
-                    •    Do not reveal that you are using AI or systems.
-                    •    Do not include internal notes, metadata, or technical labels.
-                    •    Avoid quoting outdated seasonal details or old prices.
-
-                When context is incomplete
-
-                Keep the reply helpful and friendly, and add:
-                “We’ll confirm the details and update you soon.”
-
-                Goal
-
-                Produce a natural, helpful WhatsApp message that feels like a real team member of  Mountain Lodges of Nepal — supportive, accurate, and hospitality-driven."""
-            ),
+            "email": self.prompt_config.get("email", ""),
+            "whatsapp": self.prompt_config.get("whatsapp", ""),
         }
 
-        channel_guidance = channel_prompts.get(channel_key, channel_prompts["email"])
-        return f"{base_prompt}\n\n{channel_guidance}"
+        channel_guidance = channel_prompts.get(channel_key, channel_prompts.get("email", ""))
+        if channel_guidance:
+            return f"{base_prompt}\n\n{channel_guidance}"
+        return base_prompt
 
     def query(
         self,
         query_text: str,
-        top_k: int = 7,
+        top_k: Optional[int] = None,
         chat_history: Optional[List[Dict[str, str]]] = None,
         channel: str = "email",
-        similarity_threshold: float = 0.75,
+        similarity_threshold: Optional[float] = None,
         session_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Query across all knowledge bases.
 
         Args:
             query_text: User query
-            top_k: Number of chunks to retrieve
-            similarity_threshold: Similarity threshold for retrieving chunks
+            top_k: Number of chunks to retrieve (uses config default if None)
+            similarity_threshold: Similarity threshold for retrieving chunks (uses config default if None)
             channel: Output channel style (email or whatsapp)
             session_id: Optional session ID for tracking
 
         Returns:
             Dictionary with answer, sources, and metadata
         """
-        logger.info(f"Processing query: '{query_text[:50]}...' (top_k={top_k})")
+        # Use dynamic defaults from configuration if not provided
+        if top_k is None:
+            top_k = self.rag_config.get("top_k")
+        if similarity_threshold is None:
+            similarity_threshold = self.rag_config.get("similarity_threshold")
+        
+        logger.info(f"Processing query: '{query_text[:50]}...' (top_k={top_k}, similarity_threshold={similarity_threshold})")
+
+        # Reload configuration to get latest values
+        self._load_config()
 
         #PERFORMANCE TRACKING: Start performance tracking
         request_id = None
@@ -272,26 +236,32 @@ class RAGService:
                     chat_history_length=len(chat_history) if chat_history else 0,
                 )
 
-            # Initialize Retriever with performance tracking
+            # Initialize Retriever with performance tracking and dynamic config
             vector_retriever = PostgresRetriever(
                 db=self.db,
                 embed_model=self.embed_model,
-                # top_k=top_k,
                 similarity_threshold=similarity_threshold,
-                performance_tracker=self.performance_tracker,
-                request_id=request_id,
-            )
-            bm25_retriever = BM25Retriever(
-                db=self.db,
+                top_k=top_k,
                 performance_tracker=self.performance_tracker,
                 request_id=request_id,
             )
             
+            # Build retrievers list based on BM25 enabled setting
+            retrievers = [vector_retriever]
+            if self.retriever_config["bm25"]["enabled"]:
+                bm25_retriever = BM25Retriever(
+                    db=self.db,
+                    performance_tracker=self.performance_tracker,
+                    request_id=request_id,
+                )
+                retrievers.append(bm25_retriever)
+            
+            # Use dynamic hybrid retriever configuration
             hybrid_retriever = QueryFusionRetriever(
-                retrievers=[vector_retriever, bm25_retriever],
-                similarity_top_k=top_k,  # Before reranking (we will increate this if we implement reranker later.)
-                num_queries=1,
-                mode="reciprocal_rerank",  # Reciprocal Rank Fusion 
+                retrievers=retrievers,
+                similarity_top_k=top_k,
+                num_queries=self.hybrid_config["num_queries"],
+                mode=self.hybrid_config["mode"],
                 use_async=False,
                 llm=self.llm,
             )
@@ -331,11 +301,12 @@ class RAGService:
                     request_id, "prompt_construction", prompt_construction_time_ms
                 )
 
-            # Configure Response Synthesizer
+            # Configure Response Synthesizer with dynamic response mode
+            response_mode = self.rag_config["response_mode"]
             response_synthesizer = get_response_synthesizer(
                 llm=self.llm,
                 text_qa_template=qa_template,
-                response_mode="compact", #TODO: make it dynamic
+                response_mode=response_mode,
             )
 
             # Configure Query Engine
