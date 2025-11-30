@@ -73,7 +73,7 @@ def init_db() -> None:
                 WITH (m = 16, ef_construction = 200)
             """))
             conn.execute(text("""
-            SET hnsw.ef_search = 40;
+            SET hnsw.ef_search = 256;
             """))
             logger.info("HNSW index created successfully")
         else:

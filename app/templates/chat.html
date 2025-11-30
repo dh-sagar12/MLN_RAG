@@ -78,6 +78,81 @@
     </div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.6/purify.min.js"></script>
+
+<style>
+    /* Markdown Styles within Chat Bubbles */
+    .markdown-content p {
+        margin-bottom: 0.5em;
+    }
+    .markdown-content p:last-child {
+        margin-bottom: 0;
+    }
+    .markdown-content ul {
+        list-style-type: disc;
+        padding-left: 1.5em;
+        margin-bottom: 0.5em;
+    }
+    .markdown-content ol {
+        list-style-type: decimal;
+        padding-left: 1.5em;
+        margin-bottom: 0.5em;
+    }
+    .markdown-content li {
+        margin-bottom: 0.25em;
+    }
+    .markdown-content strong {
+        font-weight: 600;
+    }
+    .markdown-content em {
+        font-style: italic;
+    }
+    .markdown-content code {
+        background-color: rgba(0, 0, 0, 0.1);
+        padding: 0.2em 0.4em;
+        border-radius: 3px;
+        font-family: monospace;
+        font-size: 0.9em;
+    }
+    .markdown-content pre {
+        background-color: #f3f4f6;
+        padding: 0.8em;
+        border-radius: 4px;
+        overflow-x: auto;
+        margin-bottom: 0.5em;
+    }
+    .markdown-content pre code {
+        background-color: transparent;
+        padding: 0;
+    }
+    .markdown-content h1, .markdown-content h2, .markdown-content h3, .markdown-content h4 {
+        font-weight: bold;
+        margin-top: 0.5em;
+        margin-bottom: 0.3em;
+    }
+    .markdown-content h1 { font-size: 1.5em; }
+    .markdown-content h2 { font-size: 1.3em; }
+    .markdown-content h3 { font-size: 1.1em; }
+    .markdown-content blockquote {
+        border-left: 3px solid #d1d5db;
+        padding-left: 1em;
+        color: #4b5563;
+        font-style: italic;
+    }
+    .markdown-content a {
+        color: #2563eb;
+        text-decoration: underline;
+    }
+    /* Adjust link color for user messages (white text) */
+    .bg-blue-600 .markdown-content a {
+        color: #bfdbfe;
+    }
+    .bg-blue-600 .markdown-content code {
+        background-color: rgba(255, 255, 255, 0.2);
+    }
+</style>
+
 <script>
 let currentSessionId = null;
 let chatHistory = [];
@@ -351,7 +426,10 @@ function addMessage(role, content, scroll = true) {
             ? 'bg-blue-600 text-white' 
             : 'bg-white border text-gray-800'
     }`;
-    bubble.textContent = content;
+    
+    // Parse markdown and sanitize
+    const parsedContent = DOMPurify.sanitize(marked.parse(content));
+    bubble.innerHTML = `<div class="markdown-content">${parsedContent}</div>`;
     
     messageDiv.appendChild(bubble);
     chatMessages.appendChild(messageDiv);

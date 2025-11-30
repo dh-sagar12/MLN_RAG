@@ -17,6 +17,8 @@ from llama_index.core.query_engine import RetrieverQueryEngine
 from llama_index.core.llms import ChatMessage as LlamaChatMessage
 from app.config import settings
 import asyncio
+from llama_index.core.retrievers import QueryFusionRetriever
+from llama_index.core.postprocessor import SentenceTransformerRerank
 
 logger = logging.getLogger(__name__)
 
@@ -47,8 +49,10 @@ class PostgresRetriever(BaseRetriever):
         vector_str = "[" + ",".join(map(str, query_vector)) + "]"
 
         # SQL for cosine similarity
+        
         sql = text(
             """
+            SET hnsw.ef_search = 256;
             SELECT 
                 e.id,
                 e.kb_id,
@@ -135,6 +139,10 @@ class RAGService:
                     f"LLM: {settings.openai_llm_model}",
                     f"Temperature: {settings.temperature})",
                 )
+                # self.reranker = SentenceTransformerRerank(
+                #         model="cross-encoder/ms-marco-MiniLM-L-12-v2",
+                #         top_n=10
+                #     )
             except Exception as e:
                 logger.error(f"Error initializing OpenAI clients: {e}", exc_info=True)
                 raise
@@ -199,7 +207,7 @@ class RAGService:
         """Return system prompt instructions tailored to a channel."""
         channel_key = (channel or "email").lower()
 
-        base_prompt = "You are responding on behalf of  Mountain Lodges of Nepal part of Sherpa Hospitality Group, a premium Himalayan hospitality and travel company."
+        base_prompt = "You are responding on behalf of Mountain Lodges of Nepal part of Sherpa Hospitality Group, a premium Himalayan hospitality and travel company. Format your response using Markdown for better readability (use bullet points, bold text, and paragraphs where appropriate)."
 
         channel_prompts = {
             "email": (
