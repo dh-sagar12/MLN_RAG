@@ -35,3 +35,90 @@ html {
     animation: spin 1s linear infinite;
 }
 
+/* Performance Tracker Styles */
+.performance-accordion-content {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.3s ease-out;
+}
+
+.performance-accordion-content.open {
+    max-height: 2000px;
+}
+
+/* Timing bar animations */
+.timing-bar {
+    transition: width 0.5s ease-out;
+}
+
+/* Metric card hover effect */
+.metric-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+/* Gradient backgrounds for sections */
+.gradient-blue {
+    background: linear-gradient(135deg, #eff6ff 0%, #e0e7ff 100%);
+}
+
+.gradient-green {
+    background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%);
+}
+
+.gradient-purple {
+    background: linear-gradient(135deg, #faf5ff 0%, #fce7f3 100%);
+}
+
+.gradient-amber {
+    background: linear-gradient(135deg, #fffbeb 0%, #ffedd5 100%);
+}
+
+/* Custom scrollbar for chunk sources */
+.chunk-sources-scroll::-webkit-scrollbar {
+    width: 6px;
+}
+
+.chunk-sources-scroll::-webkit-scrollbar-track {
+    background: #f1f1f1;
+    border-radius: 3px;
+}
+
+.chunk-sources-scroll::-webkit-scrollbar-thumb {
+    background: #c4b5fd;
+    border-radius: 3px;
+}
+
+.chunk-sources-scroll::-webkit-scrollbar-thumb:hover {
+    background: #a78bfa;
+}
+
+/* Pulse animation for live updates */
+@keyframes pulse {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.5;
+    }
+}
+
+.animate-pulse {
+    animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Line clamp utility */
+.line-clamp-2 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.line-clamp-3 {
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+

@@ -8,6 +8,7 @@ from starlette.staticfiles import StaticFiles
 from starlette.routing import Mount
 from pathlib import Path
 from app.routes import kb_routes, file_routes, chat_routes
+from app.routes import performance_routes
 from app.database import init_db
 import asyncio
 
@@ -42,6 +43,7 @@ def create_app() -> Starlette:
             *kb_routes.kb_routes,
             *file_routes.file_routes,
             *chat_routes.chat_routes,
+            *performance_routes.performance_routes,
             Mount("/static", app=StaticFiles(directory=str(Path(__file__).parent / "static")), name="static"),
         ],
         middleware=[

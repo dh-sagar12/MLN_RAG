@@ -40,6 +40,15 @@ class Settings(BaseSettings):
     top_k: int = 5
 
     # ----------------------------------------------------------------------
+    # Performance Tracking
+    # ----------------------------------------------------------------------
+    performance_tracking_enabled: bool = True
+    performance_log_dir: str = "logs/performance"
+    performance_log_filename: str = "performance.json"
+    performance_max_file_size_mb: int = 50
+    performance_flush_interval: int = 1
+
+    # ----------------------------------------------------------------------
     # Config
     # ----------------------------------------------------------------------
     model_config = SettingsConfigDict(

@@ -39,3 +39,5 @@ storage/
 .DS_Store
 Thumbs.db
 
+# Performance Tracking
+logs/

@@ -1,11 +1,19 @@
-
+import time
+import logging
 from llama_index.core import QueryBundle
 from llama_index.core.retrievers import BaseRetriever
 from llama_index.embeddings.openai import OpenAIEmbedding
 from sqlalchemy import text
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional, TYPE_CHECKING
+
 from llama_index.core.schema import NodeWithScore, TextNode
+
+if TYPE_CHECKING:
+    from app.services.performance_tracker import PerformanceTracker
+
+logger = logging.getLogger(__name__)
+
 
 class PostgresRetriever(BaseRetriever):
     """Custom retriever for PostgreSQL with pgvector."""
@@ -16,23 +24,41 @@ class PostgresRetriever(BaseRetriever):
         embed_model: OpenAIEmbedding,
         top_k: int = 5,
         similarity_threshold: float = 0.75,
+        performance_tracker: Optional["PerformanceTracker"] = None,
+        request_id: Optional[str] = None,
     ):
         self.db = db
         self.embed_model = embed_model
         self.top_k = top_k
         self.similarity_threshold = similarity_threshold
+        self.performance_tracker = performance_tracker
+        self.request_id = request_id
         super().__init__()
 
     def _retrieve(self, query_bundle: QueryBundle) -> List[NodeWithScore]:
         """Retrieve nodes given a query."""
         query_text = query_bundle.query_str
+        retrieval_start = time.perf_counter()
 
-        # Embed query
+        # Embed query with timing
+        embedding_start = time.perf_counter()
         query_embedding = self.embed_model.get_text_embedding(text=query_text)
+        embedding_time_ms = (time.perf_counter() - embedding_start) * 1000
+        
+        if self.performance_tracker and self.request_id:
+            self.performance_tracker._record_timing(
+                self.request_id, "embedding_generation", embedding_time_ms
+            )
+            # Add embedding metadata
+            self.performance_tracker.add_metadata(
+                self.request_id, "embedding_dimension", len(query_embedding)
+            )
+        
         query_vector = list(query_embedding)
         vector_str = "[" + ",".join(map(str, query_vector)) + "]"
 
-        # SQL for cosine similarity
+        # SQL for cosine similarity with timing
+        vector_search_start = time.perf_counter()
         
         sql = text(
             """
@@ -61,6 +87,24 @@ class PostgresRetriever(BaseRetriever):
             }
         )
         rows = result.fetchall()
+        
+        vector_search_time_ms = (time.perf_counter() - vector_search_start) * 1000
+        retrieval_total_time_ms = (time.perf_counter() - retrieval_start) * 1000
+        
+        if self.performance_tracker and self.request_id:
+            self.performance_tracker._record_timing(
+                self.request_id, "vector_search", vector_search_time_ms
+            )
+            self.performance_tracker._record_timing(
+                self.request_id, "retrieval_total", retrieval_total_time_ms
+            )
+            # Add search metadata
+            self.performance_tracker.add_metadata(
+                self.request_id, "hnsw_ef_search", 256
+            )
+            self.performance_tracker.add_metadata(
+                self.request_id, "rows_returned", len(rows)
+            )
 
         nodes = []
         for row in rows:
@@ -70,6 +114,7 @@ class PostgresRetriever(BaseRetriever):
                 metadata={
                     "kb_id": str(row.kb_id),
                     "kb_name": row.kb_name,
+                    "embedding_id": str(row.id),  # Add embedding ID for tracking
                     **(row.chunk_metadata or {}),
                 },
             )
@@ -79,6 +124,13 @@ class PostgresRetriever(BaseRetriever):
                     score=float(row.similarity),
                 ),
             )
+        
+        logger.debug(
+            f"Retrieval completed - Embedding: {embedding_time_ms:.2f}ms, "
+            f"Vector Search: {vector_search_time_ms:.2f}ms, "
+            f"Total: {retrieval_total_time_ms:.2f}ms, "
+            f"Rows: {len(rows)}"
+        )
 
         return nodes
 

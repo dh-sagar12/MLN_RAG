@@ -1,0 +1,572 @@
+{% extends "base.html" %}
+
+{% block title %}Performance Tracker - RAG Chatbot{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Header -->
+    <div class="flex justify-between items-center">
+        <div>
+            <h1 class="text-3xl font-bold text-gray-900">Performance Tracker</h1>
+            <p class="mt-1 text-sm text-gray-500">Monitor and analyze RAG pipeline performance metrics</p>
+        </div>
+        <div class="flex items-center space-x-3">
+            <button onclick="refreshData()" 
+                    class="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
+                <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                </svg>
+                Refresh
+            </button>
+            <button onclick="toggleMetricInfo()" 
+                    class="inline-flex items-center px-4 py-2 border border-indigo-300 rounded-md shadow-sm text-sm font-medium text-indigo-700 bg-indigo-50 hover:bg-indigo-100 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
+                <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                </svg>
+                Metric Guide
+            </button>
+        </div>
+    </div>
+
+    <!-- Metric Explanations Panel (Hidden by default) -->
+    <div id="metric-info-panel" class="hidden bg-gradient-to-r from-indigo-50 to-purple-50 rounded-xl shadow-lg border border-indigo-100 p-6">
+        <div class="flex justify-between items-start mb-4">
+            <h2 class="text-xl font-bold text-indigo-900">📊 Metric Explanations</h2>
+            <button onclick="toggleMetricInfo()" class="text-gray-400 hover:text-gray-600">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                </svg>
+            </button>
+        </div>
+        <div id="metric-explanations" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <!-- Populated by JavaScript -->
+        </div>
+    </div>
+
+    <!-- Summary Stats -->
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-4" id="summary-stats">
+        <div class="bg-white rounded-lg shadow p-5 border-l-4 border-blue-500">
+            <div class="flex items-center">
+                <div class="flex-shrink-0">
+                    <svg class="h-8 w-8 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path>
+                    </svg>
+                </div>
+                <div class="ml-4">
+                    <p class="text-sm font-medium text-gray-500">Total Queries</p>
+                    <p class="text-2xl font-bold text-gray-900" id="stat-total">-</p>
+                </div>
+            </div>
+        </div>
+        <div class="bg-white rounded-lg shadow p-5 border-l-4 border-green-500">
+            <div class="flex items-center">
+                <div class="flex-shrink-0">
+                    <svg class="h-8 w-8 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                </div>
+                <div class="ml-4">
+                    <p class="text-sm font-medium text-gray-500">Avg Response Time</p>
+                    <p class="text-2xl font-bold text-gray-900" id="stat-avg-time">-</p>
+                </div>
+            </div>
+        </div>
+        <div class="bg-white rounded-lg shadow p-5 border-l-4 border-purple-500">
+            <div class="flex items-center">
+                <div class="flex-shrink-0">
+                    <svg class="h-8 w-8 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+                    </svg>
+                </div>
+                <div class="ml-4">
+                    <p class="text-sm font-medium text-gray-500">Avg Similarity</p>
+                    <p class="text-2xl font-bold text-gray-900" id="stat-avg-similarity">-</p>
+                </div>
+            </div>
+        </div>
+        <div class="bg-white rounded-lg shadow p-5 border-l-4 border-amber-500">
+            <div class="flex items-center">
+                <div class="flex-shrink-0">
+                    <svg class="h-8 w-8 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                </div>
+                <div class="ml-4">
+                    <p class="text-sm font-medium text-gray-500">Total Cost</p>
+                    <p class="text-2xl font-bold text-gray-900" id="stat-total-cost">-</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading State -->
+    <div id="loading-state" class="flex justify-center items-center py-12">
+        <svg class="animate-spin h-8 w-8 text-indigo-600" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+        </svg>
+        <span class="ml-3 text-gray-600">Loading performance data...</span>
+    </div>
+
+    <!-- Query Accordion List -->
+    <div id="queries-container" class="hidden space-y-3">
+        <!-- Queries will be populated here -->
+    </div>
+
+    <!-- Empty State -->
+    <div id="empty-state" class="hidden bg-white rounded-lg shadow p-12 text-center">
+        <svg class="mx-auto h-16 w-16 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+        </svg>
+        <h3 class="mt-4 text-lg font-medium text-gray-900">No performance data yet</h3>
+        <p class="mt-2 text-gray-500">Start chatting to generate performance metrics.</p>
+        <a href="/chat" class="mt-4 inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700">
+            Go to Chat
+        </a>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let metricExplanations = {};
+
+// Fetch metric explanations on load
+async function loadMetricExplanations() {
+    try {
+        const response = await fetch('/api/performance/metrics-info');
+        metricExplanations = await response.json();
+        renderMetricExplanations();
+    } catch (error) {
+        console.error('Error loading metric explanations:', error);
+    }
+}
+
+function renderMetricExplanations() {
+    const container = document.getElementById('metric-explanations');
+    container.innerHTML = Object.entries(metricExplanations).map(([key, info]) => `
+        <div class="bg-white rounded-lg p-4 shadow-sm border border-indigo-100 hover:shadow-md transition-shadow">
+            <div class="flex items-start justify-between">
+                <h4 class="font-semibold text-indigo-800 text-sm">${info.name}</h4>
+                <span class="text-xs px-2 py-1 rounded-full bg-indigo-100 text-indigo-700">${info.unit}</span>
+            </div>
+            <p class="mt-2 text-xs text-gray-600 leading-relaxed">${info.description}</p>
+            <div class="mt-2 text-xs">
+                <span class="text-green-600 font-medium">Good: ${info.good_range}</span>
+            </div>
+        </div>
+    `).join('');
+}
+
+function toggleMetricInfo() {
+    const panel = document.getElementById('metric-info-panel');
+    panel.classList.toggle('hidden');
+}
+
+// Format milliseconds nicely
+function formatMs(ms) {
+    if (ms < 1000) return `${ms.toFixed(0)}ms`;
+    return `${(ms / 1000).toFixed(2)}s`;
+}
+
+// Format timestamp
+function formatTimestamp(timestamp) {
+    const date = new Date(timestamp);
+    return date.toLocaleString();
+}
+
+// Get status color based on success/failure
+function getStatusColor(success) {
+    return success ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800';
+}
+
+// Get performance color based on value
+function getPerformanceColor(value, goodThreshold, badThreshold, inverse = false) {
+    if (inverse) {
+        if (value >= goodThreshold) return 'text-green-600';
+        if (value <= badThreshold) return 'text-red-600';
+        return 'text-amber-600';
+    }
+    if (value <= goodThreshold) return 'text-green-600';
+    if (value >= badThreshold) return 'text-red-600';
+    return 'text-amber-600';
+}
+
+// Render a single query accordion item
+function renderQueryItem(record, index) {
+    const session = record.session || {};
+    const query = record.query || {};
+    const timing = record.timing || {};
+    const retrieval = record.retrieval || {};
+    const generation = record.generation || {};
+    const metadata = record.metadata || {};
+
+    const statusClass = getStatusColor(record.success);
+    const totalTimeColor = getPerformanceColor(timing.total_pipeline_ms, 5000, 10000);
+    
+    return `
+    <div class="bg-white rounded-xl shadow-md overflow-hidden border border-gray-100 hover:shadow-lg transition-shadow">
+        <!-- Accordion Header -->
+        <button onclick="toggleAccordion(${index})" 
+                class="w-full px-6 py-4 flex items-center justify-between hover:bg-gray-50 transition-colors">
+            <div class="flex items-center space-x-4 flex-1 min-w-0">
+                <div class="flex-shrink-0">
+                    <span class="inline-flex items-center justify-center h-10 w-10 rounded-full ${record.success ? 'bg-green-100' : 'bg-red-100'}">
+                        ${record.success 
+                            ? '<svg class="h-5 w-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>'
+                            : '<svg class="h-5 w-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>'
+                        }
+                    </span>
+                </div>
+                <div class="flex-1 min-w-0">
+                    <p class="text-sm font-medium text-gray-900 truncate">${escapeHtml(query.original_query || 'Unknown Query')}</p>
+                    <div class="flex items-center space-x-3 mt-1">
+                        <span class="text-xs text-gray-500">${formatTimestamp(session.timestamp)}</span>
+                        <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-indigo-100 text-indigo-800">
+                            ${query.channel || 'email'}
+                        </span>
+                        <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-800">
+                            ${retrieval.chunks_retrieved || 0} chunks
+                        </span>
+                    </div>
+                </div>
+            </div>
+            <div class="flex items-center space-x-4 ml-4">
+                <div class="text-right">
+                    <p class="text-sm font-semibold ${totalTimeColor}">${formatMs(timing.total_pipeline_ms || 0)}</p>
+                    <p class="text-xs text-gray-500">total time</p>
+                </div>
+                <svg id="chevron-${index}" class="h-5 w-5 text-gray-400 transform transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                </svg>
+            </div>
+        </button>
+        
+        <!-- Accordion Content -->
+        <div id="content-${index}" class="hidden border-t border-gray-100">
+            <div class="p-6 space-y-6">
+                
+                <!-- Query Info Section -->
+                <div class="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg p-4">
+                    <h4 class="text-sm font-semibold text-indigo-900 mb-3 flex items-center">
+                        <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                        </svg>
+                        Query Information
+                    </h4>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <p class="text-xs text-gray-500 mb-1">Original Query</p>
+                            <p class="text-sm text-gray-800 bg-white rounded p-2 border">${escapeHtml(query.original_query || '-')}</p>
+                        </div>
+                        <div>
+                            <p class="text-xs text-gray-500 mb-1">Enhanced Query ${query.query_was_enhanced ? '<span class="text-green-600">(Modified)</span>' : ''}</p>
+                            <p class="text-sm text-gray-800 bg-white rounded p-2 border">${escapeHtml(query.enhanced_query || '-')}</p>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-3 gap-4 mt-3">
+                        <div class="text-center p-2 bg-white rounded">
+                            <p class="text-lg font-semibold text-indigo-600">${query.query_word_count || 0}</p>
+                            <p class="text-xs text-gray-500">Words</p>
+                        </div>
+                        <div class="text-center p-2 bg-white rounded">
+                            <p class="text-lg font-semibold text-indigo-600">${query.chat_history_length || 0}</p>
+                            <p class="text-xs text-gray-500">History Messages</p>
+                        </div>
+                        <div class="text-center p-2 bg-white rounded">
+                            <p class="text-lg font-semibold text-indigo-600">${((query.enhancement_similarity || 0) * 100).toFixed(0)}%</p>
+                            <p class="text-xs text-gray-500">Query Similarity</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Timing Breakdown -->
+                <div class="bg-gradient-to-r from-green-50 to-emerald-50 rounded-lg p-4">
+                    <h4 class="text-sm font-semibold text-emerald-900 mb-3 flex items-center">
+                        <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                        </svg>
+                        Timing Breakdown
+                    </h4>
+                    <div class="space-y-2">
+                        ${renderTimingBar('Query Enhancement', timing.query_enhancement_ms, timing.total_pipeline_ms, 'bg-blue-500')}
+                        ${renderTimingBar('Embedding Generation', timing.embedding_generation_ms, timing.total_pipeline_ms, 'bg-purple-500')}
+                        ${renderTimingBar('Vector Search', timing.vector_search_ms, timing.total_pipeline_ms, 'bg-cyan-500')}
+                        ${renderTimingBar('LLM Generation', timing.llm_generation_ms, timing.total_pipeline_ms, 'bg-amber-500')}
+                    </div>
+                    <div class="mt-3 pt-3 border-t border-emerald-200 flex justify-between items-center">
+                        <span class="text-sm font-medium text-emerald-900">Total Pipeline Time</span>
+                        <span class="text-lg font-bold ${totalTimeColor}">${formatMs(timing.total_pipeline_ms || 0)}</span>
+                    </div>
+                </div>
+
+                <!-- Retrieval Metrics -->
+                <div class="bg-gradient-to-r from-purple-50 to-pink-50 rounded-lg p-4">
+                    <h4 class="text-sm font-semibold text-purple-900 mb-3 flex items-center">
+                        <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path>
+                        </svg>
+                        Retrieval Quality Metrics
+                        <span class="ml-2 text-xs text-purple-600 cursor-help" title="Click 'Metric Guide' for detailed explanations">ⓘ</span>
+                    </h4>
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+                        ${renderMetricCard('Reciprocal Rank', retrieval.reciprocal_rank, 1, true)}
+                        ${renderMetricCard('nDCG Score', retrieval.ndcg_score, 1, true)}
+                        ${renderMetricCard('Precision@K', retrieval.precision_at_k, 1, true)}
+                        ${renderMetricCard('Context Coverage', retrieval.context_coverage, 1, true)}
+                        ${renderMetricCard('Avg Similarity', retrieval.avg_similarity_score, 1, true)}
+                        ${renderMetricCard('Min Similarity', retrieval.min_similarity_score, 1, true)}
+                        ${renderMetricCard('Max Similarity', retrieval.max_similarity_score, 1, true)}
+                        ${renderMetricCard('Chunks Retrieved', retrieval.chunks_retrieved, retrieval.top_k_requested, false, true)}
+                    </div>
+                    
+                    <!-- Knowledge Bases Used -->
+                    <div class="mt-4">
+                        <p class="text-xs text-gray-500 mb-2">Knowledge Bases Used</p>
+                        <div class="flex flex-wrap gap-2">
+                            ${(retrieval.knowledge_bases_used || []).map(kb => 
+                                `<span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-purple-100 text-purple-800">${escapeHtml(kb)}</span>`
+                            ).join('')}
+                        </div>
+                    </div>
+                    
+                    <!-- Chunk Sources -->
+                    ${renderChunkSources(retrieval.chunk_sources || [])}
+                </div>
+
+                <!-- Generation Metrics -->
+                <div class="bg-gradient-to-r from-amber-50 to-orange-50 rounded-lg p-4">
+                    <h4 class="text-sm font-semibold text-amber-900 mb-3 flex items-center">
+                        <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"></path>
+                        </svg>
+                        Generation Metrics
+                    </h4>
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+                        <div class="bg-white rounded-lg p-3 text-center border border-amber-100">
+                            <p class="text-lg font-bold text-amber-700">${generation.model_name || '-'}</p>
+                            <p class="text-xs text-gray-500">Model</p>
+                        </div>
+                        <div class="bg-white rounded-lg p-3 text-center border border-amber-100">
+                            <p class="text-lg font-bold text-amber-700">${generation.total_tokens || 0}</p>
+                            <p class="text-xs text-gray-500">Total Tokens</p>
+                        </div>
+                        <div class="bg-white rounded-lg p-3 text-center border border-amber-100">
+                            <p class="text-lg font-bold text-amber-700">${(generation.tokens_per_second || 0).toFixed(1)}</p>
+                            <p class="text-xs text-gray-500">Tokens/sec</p>
+                        </div>
+                        <div class="bg-white rounded-lg p-3 text-center border border-amber-100">
+                            <p class="text-lg font-bold text-green-600">$${(generation.cost_estimate_usd || 0).toFixed(4)}</p>
+                            <p class="text-xs text-gray-500">Est. Cost</p>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-3 gap-3 mt-3">
+                        <div class="bg-white rounded-lg p-3 text-center border border-amber-100">
+                            <p class="text-sm font-semibold text-gray-700">${generation.input_tokens || 0}</p>
+                            <p class="text-xs text-gray-500">Input Tokens</p>
+                        </div>
+                        <div class="bg-white rounded-lg p-3 text-center border border-amber-100">
+                            <p class="text-sm font-semibold text-gray-700">${generation.output_tokens || 0}</p>
+                            <p class="text-xs text-gray-500">Output Tokens</p>
+                        </div>
+                        <div class="bg-white rounded-lg p-3 text-center border border-amber-100">
+                            <p class="text-sm font-semibold ${getPerformanceColor(generation.context_utilization_ratio || 0, 0.05, 0.01, true)}">${((generation.context_utilization_ratio || 0) * 100).toFixed(1)}%</p>
+                            <p class="text-xs text-gray-500">Context Utilization</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Additional Metadata -->
+                <div class="bg-gray-50 rounded-lg p-4">
+                    <h4 class="text-sm font-semibold text-gray-700 mb-3 flex items-center">
+                        <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                        </svg>
+                        Session & Metadata
+                    </h4>
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                        <div>
+                            <p class="text-xs text-gray-500">Request ID</p>
+                            <p class="font-mono text-xs text-gray-700 truncate" title="${session.request_id || '-'}">${session.request_id || '-'}</p>
+                        </div>
+                        <div>
+                            <p class="text-xs text-gray-500">Session ID</p>
+                            <p class="font-mono text-xs text-gray-700 truncate" title="${session.session_id || '-'}">${session.session_id || '-'}</p>
+                        </div>
+                        <div>
+                            <p class="text-xs text-gray-500">Embedding Model</p>
+                            <p class="text-xs text-gray-700">${metadata.embedding_model || '-'}</p>
+                        </div>
+                        <div>
+                            <p class="text-xs text-gray-500">HNSW ef_search</p>
+                            <p class="text-xs text-gray-700">${metadata.hnsw_ef_search || '-'}</p>
+                        </div>
+                    </div>
+                    ${record.error_message ? `
+                    <div class="mt-3 p-3 bg-red-50 border border-red-200 rounded">
+                        <p class="text-xs text-red-600 font-medium">Error: ${escapeHtml(record.error_type || 'Unknown')}</p>
+                        <p class="text-xs text-red-500 mt-1">${escapeHtml(record.error_message)}</p>
+                    </div>
+                    ` : ''}
+                </div>
+            </div>
+        </div>
+    </div>
+    `;
+}
+
+function renderTimingBar(label, value, total, colorClass) {
+    const percentage = total > 0 ? (value / total) * 100 : 0;
+    return `
+    <div class="flex items-center space-x-3">
+        <div class="w-32 text-xs text-gray-600">${label}</div>
+        <div class="flex-1 h-4 bg-gray-200 rounded-full overflow-hidden">
+            <div class="${colorClass} h-full rounded-full transition-all" style="width: ${percentage}%"></div>
+        </div>
+        <div class="w-20 text-xs text-right font-medium text-gray-700">${formatMs(value || 0)}</div>
+    </div>
+    `;
+}
+
+function renderMetricCard(label, value, maxValue, isRatio = false, isCount = false) {
+    let displayValue, colorClass;
+    
+    if (isRatio) {
+        displayValue = ((value || 0) * 100).toFixed(0) + '%';
+        const ratio = value || 0;
+        colorClass = ratio >= 0.7 ? 'text-green-600' : ratio >= 0.4 ? 'text-amber-600' : 'text-red-600';
+    } else if (isCount) {
+        displayValue = `${value || 0}/${maxValue}`;
+        colorClass = 'text-purple-600';
+    } else {
+        displayValue = (value || 0).toFixed(2);
+        colorClass = 'text-purple-600';
+    }
+    
+    return `
+    <div class="bg-white rounded-lg p-3 text-center border border-purple-100">
+        <p class="text-lg font-bold ${colorClass}">${displayValue}</p>
+        <p class="text-xs text-gray-500">${label}</p>
+    </div>
+    `;
+}
+
+function renderChunkSources(sources) {
+    if (!sources || sources.length === 0) return '';
+    
+    return `
+    <div class="mt-4">
+        <p class="text-xs text-gray-500 mb-2">Retrieved Chunks</p>
+        <div class="space-y-2 max-h-60 overflow-y-auto">
+            ${sources.map((source, i) => `
+            <div class="bg-white rounded p-3 border border-purple-100 text-xs">
+                <div class="flex items-center justify-between mb-2">
+                    <span class="font-medium text-purple-700">#${i + 1} - ${escapeHtml(source.kb_name || 'Unknown')}</span>
+                    <span class="px-2 py-0.5 rounded bg-purple-100 text-purple-700 font-mono">${(source.similarity * 100).toFixed(1)}%</span>
+                </div>
+                <p class="text-gray-600 line-clamp-2">${escapeHtml(source.text_preview || '-')}</p>
+                ${source.file_path ? `<p class="text-gray-400 mt-1 truncate" title="${escapeHtml(source.file_path)}">📄 ${escapeHtml(source.file_path)}</p>` : ''}
+            </div>
+            `).join('')}
+        </div>
+    </div>
+    `;
+}
+
+function toggleAccordion(index) {
+    const content = document.getElementById(`content-${index}`);
+    const chevron = document.getElementById(`chevron-${index}`);
+    
+    content.classList.toggle('hidden');
+    chevron.classList.toggle('rotate-180');
+}
+
+function escapeHtml(text) {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+async function loadPerformanceData() {
+    const loadingEl = document.getElementById('loading-state');
+    const containerEl = document.getElementById('queries-container');
+    const emptyEl = document.getElementById('empty-state');
+    
+    try {
+        const response = await fetch('/api/performance/records?limit=100');
+        const data = await response.json();
+        
+        loadingEl.classList.add('hidden');
+        
+        if (!data.records || data.records.length === 0) {
+            emptyEl.classList.remove('hidden');
+            return;
+        }
+        
+        // Update summary stats
+        updateSummaryStats(data.records);
+        
+        // Render queries
+        containerEl.innerHTML = data.records.map((record, i) => renderQueryItem(record, i)).join('');
+        containerEl.classList.remove('hidden');
+        
+    } catch (error) {
+        console.error('Error loading performance data:', error);
+        loadingEl.innerHTML = `
+            <div class="text-center text-red-500">
+                <p>Error loading performance data</p>
+                <p class="text-sm">${error.message}</p>
+            </div>
+        `;
+    }
+}
+
+function updateSummaryStats(records) {
+    const total = records.length;
+    const avgTime = records.reduce((sum, r) => sum + (r.timing?.total_pipeline_ms || 0), 0) / total;
+    const avgSim = records.reduce((sum, r) => sum + (r.retrieval?.avg_similarity_score || 0), 0) / total;
+    const totalCost = records.reduce((sum, r) => sum + (r.generation?.cost_estimate_usd || 0), 0);
+    
+    document.getElementById('stat-total').textContent = total;
+    document.getElementById('stat-avg-time').textContent = formatMs(avgTime);
+    document.getElementById('stat-avg-similarity').textContent = (avgSim * 100).toFixed(1) + '%';
+    document.getElementById('stat-total-cost').textContent = '$' + totalCost.toFixed(4);
+}
+
+function refreshData() {
+    const containerEl = document.getElementById('queries-container');
+    const loadingEl = document.getElementById('loading-state');
+    const emptyEl = document.getElementById('empty-state');
+    
+    containerEl.classList.add('hidden');
+    emptyEl.classList.add('hidden');
+    loadingEl.classList.remove('hidden');
+    loadingEl.innerHTML = `
+        <svg class="animate-spin h-8 w-8 text-indigo-600" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+        </svg>
+        <span class="ml-3 text-gray-600">Loading performance data...</span>
+    `;
+    
+    loadPerformanceData();
+}
+
+// Initialize on page load
+document.addEventListener('DOMContentLoaded', () => {
+    loadMetricExplanations();
+    loadPerformanceData();
+});
+</script>
+
+<style>
+.line-clamp-2 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+</style>
+{% endblock %}
+
