@@ -103,6 +103,12 @@ METRIC_EXPLANATIONS = {
         "unit": "milliseconds", 
         "good_range": "< 100ms"
     },
+    "bm25_search_ms": {
+        "name": "BM25 Search Time",
+        "description": "Time to perform full-text search using PostgreSQL's ts_rank_cd (BM25-like ranking). This is keyword-based sparse retrieval as opposed to semantic vector search.",
+        "unit": "milliseconds",
+        "good_range": "< 100ms"
+    },
     "retrieval_total_ms": {
         "name": "Total Retrieval Time",
         "description": "Combined time for embedding generation + vector search. This is the complete time to fetch relevant context from the knowledge base.",

@@ -3,6 +3,7 @@
 import logging
 import time
 from typing import List, Dict, Any, Optional, AsyncIterator, Set
+from llama_index.core.retrievers import QueryFusionRetriever
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import text
 from llama_index.embeddings.openai import OpenAIEmbedding
@@ -17,7 +18,7 @@ from app.config import settings
 from app.services.performance_tracker import get_performance_tracker, PerformanceTracker
 import asyncio
 from app.services.prompt import ENHANCED_QUERY_PROMPT
-from app.services.retriever import PostgresRetriever
+from app.services.retriever import BM25Retriever, PostgresRetriever
 
 
 logger = logging.getLogger(__name__)
@@ -272,14 +273,30 @@ class RAGService:
                 )
 
             # Initialize Retriever with performance tracking
-            retriever = PostgresRetriever(
+            vector_retriever = PostgresRetriever(
                 db=self.db,
                 embed_model=self.embed_model,
-                top_k=top_k,
+                # top_k=top_k,
                 similarity_threshold=similarity_threshold,
                 performance_tracker=self.performance_tracker,
                 request_id=request_id,
             )
+            bm25_retriever = BM25Retriever(
+                db=self.db,
+                performance_tracker=self.performance_tracker,
+                request_id=request_id,
+            )
+            
+            hybrid_retriever = QueryFusionRetriever(
+                retrievers=[vector_retriever, bm25_retriever],
+                similarity_top_k=top_k,  # Before reranking (we will increate this if we implement reranker later.)
+                num_queries=1,
+                mode="reciprocal_rerank",  # Reciprocal Rank Fusion 
+                use_async=False,
+                llm=self.llm,
+            )
+            #RRF is a rank aggregation method that combines rankings from multiple sources into a single, unified ranking, using the formula: score = sum over all retrievers of (1 / (k + rank)), where k is typically 60 
+
 
             # Build Prompt Template
             prompt_construction_start = time.perf_counter()
@@ -318,12 +335,12 @@ class RAGService:
             response_synthesizer = get_response_synthesizer(
                 llm=self.llm,
                 text_qa_template=qa_template,
-                response_mode="compact",
+                response_mode="compact", #TODO: make it dynamic
             )
 
             # Configure Query Engine
             query_engine = RetrieverQueryEngine(
-                retriever=retriever,
+                retriever=hybrid_retriever,
                 response_synthesizer=response_synthesizer,
             )
 

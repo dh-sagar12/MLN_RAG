@@ -22,10 +22,11 @@ class PostgresRetriever(BaseRetriever):
         self,
         db: Session,
         embed_model: OpenAIEmbedding,
-        top_k: int = 5,
+        top_k: int = 50,
         similarity_threshold: float = 0.75,
         performance_tracker: Optional["PerformanceTracker"] = None,
         request_id: Optional[str] = None,
+        ef_search: int = 256,
     ):
         self.db = db
         self.embed_model = embed_model
@@ -33,6 +34,7 @@ class PostgresRetriever(BaseRetriever):
         self.similarity_threshold = similarity_threshold
         self.performance_tracker = performance_tracker
         self.request_id = request_id
+        self.ef_search = 256
         super().__init__()
 
     def _retrieve(self, query_bundle: QueryBundle) -> List[NodeWithScore]:
@@ -45,6 +47,8 @@ class PostgresRetriever(BaseRetriever):
         query_embedding = self.embed_model.get_text_embedding(text=query_text)
         embedding_time_ms = (time.perf_counter() - embedding_start) * 1000
         
+        
+        #PERFORMANCE TRACKING: Record embedding generation
         if self.performance_tracker and self.request_id:
             self.performance_tracker._record_timing(
                 self.request_id, "embedding_generation", embedding_time_ms
@@ -62,7 +66,7 @@ class PostgresRetriever(BaseRetriever):
         
         sql = text(
             """
-            SET hnsw.ef_search = 256;
+            SET hnsw.ef_search = :ef_search;
             SELECT 
                 e.id,
                 e.kb_id,
@@ -84,13 +88,16 @@ class PostgresRetriever(BaseRetriever):
                 "query_vector": vector_str,
                 "top_k": self.top_k,
                 "similarity_threshold": self.similarity_threshold,
+                "ef_search": self.ef_search,
             }
         )
         rows = result.fetchall()
         
+        logger.info(f"Vector search retrieved {len(rows)} nodes with similarity threshold {self.similarity_threshold}")
+        
+        #PERFORMANCE TRACKING: Record vector search and retrieval total
         vector_search_time_ms = (time.perf_counter() - vector_search_start) * 1000
         retrieval_total_time_ms = (time.perf_counter() - retrieval_start) * 1000
-        
         if self.performance_tracker and self.request_id:
             self.performance_tracker._record_timing(
                 self.request_id, "vector_search", vector_search_time_ms
@@ -100,7 +107,7 @@ class PostgresRetriever(BaseRetriever):
             )
             # Add search metadata
             self.performance_tracker.add_metadata(
-                self.request_id, "hnsw_ef_search", 256
+                self.request_id, "hnsw_ef_search", self.ef_search
             )
             self.performance_tracker.add_metadata(
                 self.request_id, "rows_returned", len(rows)
