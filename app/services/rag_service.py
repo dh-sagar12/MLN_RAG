@@ -150,7 +150,9 @@ class RAGService:
             "whatsapp": self.prompt_config.get("whatsapp", ""),
         }
 
-        channel_guidance = channel_prompts.get(channel_key, channel_prompts.get("email", ""))
+        channel_guidance = channel_prompts.get(
+            channel_key, channel_prompts.get("email", "")
+        )
         if channel_guidance:
             return f"{base_prompt}\n\n{channel_guidance}"
         return base_prompt
@@ -178,16 +180,18 @@ class RAGService:
         """
         # Use dynamic defaults from configuration if not provided
         if top_k is None:
-            top_k = self.rag_config.get("top_k") #top k for end of result
+            top_k = self.rag_config.get("top_k")  # top k for end of result
         if similarity_threshold is None:
             similarity_threshold = self.rag_config.get("similarity_threshold")
-        
-        logger.info(f"Processing query: '{query_text[:50]}...' (top_k={top_k}, similarity_threshold={similarity_threshold})")
+
+        logger.info(
+            f"Processing query: '{query_text[:50]}...' (top_k={top_k}, similarity_threshold={similarity_threshold})"
+        )
 
         # Reload configuration to get latest values
         self._load_config()
 
-        #PERFORMANCE TRACKING: Start performance tracking
+        # PERFORMANCE TRACKING: Start performance tracking
         request_id = None
         if self.performance_tracker:
             request_id = self.performance_tracker.start_request(session_id=session_id)
@@ -197,8 +201,8 @@ class RAGService:
                 logger.warning(
                     "OpenAI API key not configured, returning error response"
                 )
-                
-                #PERFORMANCE TRACKING: Record error
+
+                # PERFORMANCE TRACKING: Record error
                 if self.performance_tracker and request_id:
                     self.performance_tracker.record_error(
                         request_id,
@@ -213,7 +217,7 @@ class RAGService:
                     "chunks": [],
                 }
 
-            #PERFORMANCE TRACKING: Track query enhancement
+            # PERFORMANCE TRACKING: Track query enhancement
             enhancement_start = time.perf_counter()
             enhanced_query = self.get_enhanced_query(
                 query_text=query_text,
@@ -223,7 +227,7 @@ class RAGService:
 
             logger.info(f"Enhanced query: {enhanced_query}")
 
-            #PERFORMANCE TRACKING: Record query metrics
+            # PERFORMANCE TRACKING: Record query metrics
             if self.performance_tracker and request_id:
                 self.performance_tracker._record_timing(
                     request_id, "query_enhancement", enhancement_time_ms
@@ -244,7 +248,7 @@ class RAGService:
                 performance_tracker=self.performance_tracker,
                 request_id=request_id,
             )
-            
+
             # Build retrievers list based on BM25 enabled setting
             retrievers = [vector_retriever]
             if self.retriever_config["bm25"]["enabled"]:
@@ -254,19 +258,24 @@ class RAGService:
                     request_id=request_id,
                 )
                 retrievers.append(bm25_retriever)
-            
+
             # Use dynamic hybrid retriever configuration
             hybrid_retriever = QueryFusionRetriever(
                 retrievers=retrievers,
                 similarity_top_k=top_k,
-                num_queries=self.hybrid_config["num_queries"], # More than one if you want to generate multiple queries for similarity search,
-                query_gen_prompt=self.prompt_config.get("query_enhancement"), #only used when num_queris > 1
-                mode=self.hybrid_config["mode"], #options: RRF, Relative Score, Distance Base Score, Simple Score
+                num_queries=self.hybrid_config[
+                    "num_queries"
+                ],  # More than one if you want to generate multiple queries for similarity search,
+                query_gen_prompt=self.prompt_config.get(
+                    "query_enhancement"
+                ),  # only used when num_queris > 1
+                mode=self.hybrid_config[
+                    "mode"
+                ],  # options: RRF, Relative Score, Distance Base Score, Simple Score
                 use_async=False,
                 llm=self.llm,
             )
-            #RRF is a rank aggregation method that combines rankings from multiple sources into a single, unified ranking, using the formula: score = sum over all retrievers of (1 / (k + rank)), where k is typically 60 
-
+            # RRF is a rank aggregation method that combines rankings from multiple sources into a single, unified ranking, using the formula: score = sum over all retrievers of (1 / (k + rank)), where k is typically 60
 
             # Build Prompt Template
             prompt_construction_start = time.perf_counter()
@@ -302,11 +311,11 @@ class RAGService:
                 )
 
             # Configure Response Synthesizer with dynamic response mode
-            response_mode = self.rag_config["response_mode"] 
+            response_mode = self.rag_config["response_mode"]
             response_synthesizer = get_response_synthesizer(
                 llm=self.llm,
                 text_qa_template=qa_template,
-                response_mode=response_mode, #OPTIONSL: refine, compact, tree_sumarize, simple_summarize, accumulate,compact_accumulate, generation, no_text, context_only.
+                response_mode=response_mode,  # OPTIONSL: refine, compact, tree_sumarize, simple_summarize, accumulate,compact_accumulate, generation, no_text, context_only.
             )
 
             # Configure Query Engine
@@ -315,7 +324,7 @@ class RAGService:
                 response_synthesizer=response_synthesizer,
             )
 
-            #PERFORMANCE TRACKING: Execute Query with timing
+            # PERFORMANCE TRACKING: Execute Query with timing
             llm_generation_start = time.perf_counter()
             response = query_engine.query(enhanced_query)
             llm_generation_time_ms = (time.perf_counter() - llm_generation_start) * 1000
@@ -353,9 +362,8 @@ class RAGService:
                 kbs_used.add(kb_name)
                 if "file_path" in node.metadata:
                     sources.append(node.metadata["file_path"])
-                    
-                    
-            #PERFORMANCE TRACKING: Record performance metrics
+
+            # PERFORMANCE TRACKING: Record performance metrics
             self._record_performance_metrics(
                 request_id=request_id,
                 chunks=chunks,
@@ -390,7 +398,7 @@ class RAGService:
             raise
 
         finally:
-            #PERFORMANCE TRACKING: End performance tracking
+            # PERFORMANCE TRACKING: End performance tracking
             if self.performance_tracker and request_id:
                 record = self.performance_tracker.end_request(request_id)
                 if record:
@@ -414,7 +422,6 @@ class RAGService:
         sources: List[str],
     ):
         """Record performance metrics."""
-
 
         # Record retrieval and generation metrics
         if self.performance_tracker and request_id:
@@ -446,9 +453,6 @@ class RAGService:
             self.performance_tracker.add_metadata(
                 request_id, "sources_count", len(set(sources))
             )
-
-
-
 
     async def stream_query(self, query_text: str, top_k: int = 5) -> AsyncIterator[str]:
         """Stream query response."""

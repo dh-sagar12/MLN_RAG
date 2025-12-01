@@ -3,13 +3,18 @@
 import json
 import logging
 from pathlib import Path
+from collections import defaultdict
 from starlette.routing import Route
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.templating import Jinja2Templates
+from sqlalchemy import select
 
 from app.config import settings
 from app.services.performance_tracker import get_performance_tracker
+from app.database import SessionLocal
+from app.models.embedding import Embedding
+from app.models.knowledge_base import KnowledgeBase
 
 logger = logging.getLogger(__name__)
 
@@ -195,12 +200,223 @@ async def get_metric_explanations(request: Request):
     return JSONResponse(METRIC_EXPLANATIONS)
 
 
+async def chunks_analytics_page(request: Request):
+    """Render the chunks analytics dashboard."""
+    return templates.TemplateResponse(
+        "chunks_analytics.html",
+        {"request": request}
+    )
+
+
+async def get_chunks_analytics(request: Request):
+    """Get comprehensive chunks analytics from performance data."""
+    try:
+        limit = int(request.query_params.get("limit", 500))
+        tracker = get_performance_tracker(log_dir=settings.performance_log_dir)
+        records = tracker.get_recent_records(limit=limit)
+        
+        # Aggregate chunk statistics
+        all_chunk_ids = set()
+        chunk_usage_count = defaultdict(int)  # chunk_id -> times used
+        chunk_sources = {}  # chunk_id -> chunk source info
+        chunks_per_query = []
+        kb_usage = defaultdict(int)  # kb_name -> times used
+        total_queries = len(records)
+        total_chunks_retrieved = 0
+        
+        # Session-based chunk grouping
+        session_chunks = []  # List of { session_id, query, timestamp, chunks[] }
+        
+        for record in records:
+            retrieval = record.get("retrieval", {})
+            session = record.get("session", {})
+            query = record.get("query", {})
+            
+            chunks_retrieved = retrieval.get("chunks_retrieved", 0)
+            total_chunks_retrieved += chunks_retrieved
+            chunks_per_query.append(chunks_retrieved)
+            
+            chunk_sources_list = retrieval.get("chunk_sources", [])
+            session_chunk_data = {
+                "session_id": session.get("session_id", ""),
+                "request_id": session.get("request_id", ""),
+                "query": query.get("original_query", ""),
+                "enhanced_query": query.get("enhanced_query", ""),
+                "timestamp": session.get("timestamp", ""),
+                "channel": query.get("channel", ""),
+                "chunks": []
+            }
+            
+            for chunk in chunk_sources_list:
+                chunk_id = chunk.get("chunk_id")
+                if chunk_id:
+                    all_chunk_ids.add(chunk_id)
+                    chunk_usage_count[chunk_id] += 1
+                    
+                    # Store chunk source info (with latest data)
+                    chunk_sources[chunk_id] = {
+                        "chunk_id": chunk_id,
+                        "kb_name": chunk.get("kb_name", "Unknown"),
+                        "kb_id": chunk.get("kb_id", ""),
+                        "file_path": chunk.get("file_path", ""),
+                        "text_preview": chunk.get("text_preview", ""),
+                        "similarity": chunk.get("similarity", 0)
+                    }
+                    
+                    kb_usage[chunk.get("kb_name", "Unknown")] += 1
+                    
+                    session_chunk_data["chunks"].append({
+                        "chunk_id": chunk_id,
+                        "kb_name": chunk.get("kb_name", ""),
+                        "similarity": chunk.get("similarity", 0),
+                        "text_preview": chunk.get("text_preview", "")
+                    })
+            
+            if session_chunk_data["chunks"]:
+                session_chunks.append(session_chunk_data)
+        
+        # Calculate statistics
+        avg_chunks_per_query = sum(chunks_per_query) / len(chunks_per_query) if chunks_per_query else 0
+        max_chunks_per_query = max(chunks_per_query) if chunks_per_query else 0
+        min_chunks_per_query = min(chunks_per_query) if chunks_per_query else 0
+        
+        # Get top used chunks (sorted by usage count)
+        top_chunks = sorted(
+            [(chunk_id, count, chunk_sources.get(chunk_id, {})) 
+             for chunk_id, count in chunk_usage_count.items()],
+            key=lambda x: x[1],
+            reverse=True
+        )[:50]  # Top 50 most used chunks
+        
+        # Sort session chunks by timestamp descending
+        session_chunks.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+        
+        return JSONResponse({
+            "statistics": {
+                "total_queries": total_queries,
+                "unique_chunks_used": len(all_chunk_ids),
+                "total_chunks_retrieved": total_chunks_retrieved,
+                "avg_chunks_per_query": round(avg_chunks_per_query, 2),
+                "max_chunks_per_query": max_chunks_per_query,
+                "min_chunks_per_query": min_chunks_per_query,
+            },
+            "kb_usage": dict(kb_usage),
+            "top_chunks": [
+                {
+                    "chunk_id": chunk_id,
+                    "usage_count": count,
+                    **info
+                }
+                for chunk_id, count, info in top_chunks
+            ],
+            "session_chunks": session_chunks[:100],  # Last 100 sessions
+            "all_chunk_ids": list(all_chunk_ids)
+        })
+    except Exception as e:
+        logger.error(f"Error fetching chunks analytics: {e}", exc_info=True)
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+async def get_chunk_details(request: Request):
+    """Fetch full chunk details from database by chunk IDs."""
+    try:
+        # Get chunk IDs from query params or request body
+        chunk_ids_param = request.query_params.get("chunk_ids", "")
+        chunk_ids = [cid.strip() for cid in chunk_ids_param.split(",") if cid.strip()]
+        
+        if not chunk_ids:
+            return JSONResponse({"error": "No chunk_ids provided", "chunks": []}, status_code=400)
+        
+        # Limit to prevent too large queries
+        chunk_ids = chunk_ids[:50]
+        
+        db = SessionLocal()
+        try:
+            # Query chunks from database with knowledge base info
+            chunks_data = []
+            for chunk_id in chunk_ids:
+                try:
+                    result = db.execute(
+                        select(Embedding, KnowledgeBase.name)
+                        .join(KnowledgeBase, Embedding.kb_id == KnowledgeBase.id)
+                        .where(Embedding.id == chunk_id)
+                    ).first()
+                    
+                    if result:
+                        embedding, kb_name = result
+                        chunks_data.append({
+                            "chunk_id": str(embedding.id),
+                            "kb_id": str(embedding.kb_id),
+                            "kb_name": kb_name,
+                            "chunk_text": embedding.chunk_text,
+                            "chunk_metadata": embedding.chunk_metadata or {},
+                            "created_at": embedding.created_at.isoformat() if embedding.created_at else None,
+                            "text_length": len(embedding.chunk_text) if embedding.chunk_text else 0
+                        })
+                except Exception as e:
+                    logger.warning(f"Error fetching chunk {chunk_id}: {e}")
+                    continue
+                    
+            return JSONResponse({
+                "chunks": chunks_data,
+                "found": len(chunks_data),
+                "requested": len(chunk_ids)
+            })
+        finally:
+            db.close()
+            
+    except Exception as e:
+        logger.error(f"Error fetching chunk details: {e}", exc_info=True)
+        return JSONResponse({"error": str(e), "chunks": []}, status_code=500)
+
+
+async def get_chunk_by_id(request: Request):
+    """Get a single chunk's full details by ID."""
+    try:
+        chunk_id = request.path_params.get("chunk_id")
+        if not chunk_id:
+            return JSONResponse({"error": "No chunk_id provided"}, status_code=400)
+        
+        db = SessionLocal()
+        try:
+            result = db.execute(
+                select(Embedding, KnowledgeBase.name, KnowledgeBase.description)
+                .join(KnowledgeBase, Embedding.kb_id == KnowledgeBase.id)
+                .where(Embedding.id == chunk_id)
+            ).first()
+            
+            if not result:
+                return JSONResponse({"error": "Chunk not found"}, status_code=404)
+            
+            embedding, kb_name, kb_description = result
+            return JSONResponse({
+                "chunk_id": str(embedding.id),
+                "kb_id": str(embedding.kb_id),
+                "kb_name": kb_name,
+                "kb_description": kb_description,
+                "chunk_text": embedding.chunk_text,
+                "chunk_metadata": embedding.chunk_metadata or {},
+                "created_at": embedding.created_at.isoformat() if embedding.created_at else None,
+                "text_length": len(embedding.chunk_text) if embedding.chunk_text else 0
+            })
+        finally:
+            db.close()
+            
+    except Exception as e:
+        logger.error(f"Error fetching chunk: {e}", exc_info=True)
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
 performance_routes = [
     Route("/performance", endpoint=performance_page, methods=["GET"]),
+    Route("/performance/chunks", endpoint=chunks_analytics_page, methods=["GET"]),
     Route("/api/performance/records", endpoint=get_performance_records, methods=["GET"]),
     Route("/api/performance/stats", endpoint=get_aggregate_stats, methods=["GET"]),
     Route("/api/performance/slow", endpoint=get_slow_queries, methods=["GET"]),
     Route("/api/performance/failed", endpoint=get_failed_queries, methods=["GET"]),
     Route("/api/performance/metrics-info", endpoint=get_metric_explanations, methods=["GET"]),
+    Route("/api/performance/chunks-analytics", endpoint=get_chunks_analytics, methods=["GET"]),
+    Route("/api/performance/chunk-details", endpoint=get_chunk_details, methods=["GET"]),
+    Route("/api/performance/chunk/{chunk_id}", endpoint=get_chunk_by_id, methods=["GET"]),
 ]
 

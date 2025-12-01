@@ -459,7 +459,8 @@ class PerformanceTracker:
                 scores.append(float(score))
                 
                 # Extract chunk ID
-                chunk_id = chunk.get("metadata", {}).get("node_id", "")
+                print(chunk, 'CHUNK')
+                chunk_id = chunk.get("metadata", {}).get("embedding_id", "")
                 if not chunk_id:
                     # Generate a hash-based ID if none exists
                     chunk_text = chunk.get("text", "")[:100]
