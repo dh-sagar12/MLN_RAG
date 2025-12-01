@@ -12,6 +12,7 @@ RUN apt-get update && apt-get install -y \
     curl \
     wget \
     gnupg \
+    gosu \
     libnss3 \
     libatk1.0-0 \
     libatk-bridge2.0-0 \
@@ -43,18 +44,29 @@ RUN useradd --create-home --shell /bin/bash app && \
     mkdir -p /home/app/.cache && \
     chown -R app:app /home/app /app
 
-# Switch to app user and set HOME environment variable
+# Switch to app user for Playwright installation
 USER app
 ENV HOME=/home/app
 
 # Install Playwright browsers as 'app' user (without --with-deps since system deps already installed)
 RUN python -m playwright install chromium
 
+# Switch back to root for copying files and setting up entrypoint
+USER root
+
 # Copy application code
 COPY --chown=app:app app/ ./app/
 COPY --chown=app:app *.py ./
 COPY --chown=app:app app/templates/ ./app/templates/
 COPY --chown=app:app app/static/ ./app/static/
+
+# Create required directories
+RUN mkdir -p /app/logs/performance /app/storage/uploads && \
+    chown -R app:app /app
+
+# Copy entrypoint script
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
 # Expose port
 EXPOSE 8000
@@ -63,5 +75,6 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8000/ || exit 1
 
-# Run the Starlette application
+# Use entrypoint to fix permissions on mounted volumes, then run as app user
+ENTRYPOINT ["/entrypoint.sh"]
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
