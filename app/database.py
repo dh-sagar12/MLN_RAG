@@ -1,7 +1,7 @@
 """Database connection and session management."""
 
 import logging
-from sqlalchemy import create_engine, text
+from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.orm import sessionmaker, declarative_base
 from app.config import settings
 import asyncio
@@ -32,33 +32,10 @@ def get_db():
         db.close()
 
 
-def init_db() -> None:
-    """Initialize database tables and pgvector extension."""
-    from app.models import (
-        knowledge_base,
-        uploaded_file,
-        embedding,
-        chat_session,
-        web_crawl_source,
-        configuration,
-    )
-
-    logger.info("Initializing database...")
-
-    # Enable pgvector extension first (must be done in a transaction that commits)
-    logger.info("Creating pgvector extension...")
-    with engine.begin() as conn:
-        conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-    logger.info("pgvector extension created/verified")
-
-    # Create all tables
-    logger.info("Creating database tables...")
-    Base.metadata.create_all(bind=engine)
-    logger.info("Database tables created/verified")
-
+def _create_hnsw_index(db : Engine):
     # Create HNSW index for embeddings (in a new transaction)
     logger.info("Creating HNSW index for embeddings...")
-    with engine.begin() as conn:
+    with db.begin() as conn:
         # Check if index already exists to avoid errors
         result = conn.execute(
             text(
@@ -98,6 +75,7 @@ def init_db() -> None:
         # Set HNSW search parameters (session-level, not persistent)
         # This will be set per connection as needed
 
+def _create_tsv_index(db: Engine):
     logger.info("Creating Index embeddings_chunk_text_tsv_idx & trigger.")
     with engine.begin() as conn:
         result = conn.execute(
@@ -146,6 +124,35 @@ def init_db() -> None:
                 """
             )
         )
+
+
+def init_db() -> None:
+    """Initialize database tables and pgvector extension."""
+    from app.models import (
+        knowledge_base,
+        uploaded_file,
+        embedding,
+        chat_session,
+        web_crawl_source,
+        configuration,
+    )
+
+    logger.info("Initializing database...")
+
+    # Enable pgvector extension first (must be done in a transaction that commits)
+    logger.info("Creating pgvector extension...")
+    with engine.begin() as conn:
+        conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+    logger.info("pgvector extension created/verified")
+
+    # Create all tables
+    logger.info("Creating database tables...")
+    Base.metadata.create_all(bind=engine)
+    logger.info("Database tables created/verified")
+
+    # _create_hnsw_index(db=engine)
+
+    # _create_tsv_index(db=engine)
 
     # Initialize default configuration values
     logger.info("Initializing default configuration...")

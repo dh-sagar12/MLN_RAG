@@ -26,6 +26,7 @@ from app.models import (
     WebCrawlSource,
 )
 from app.services.file_service import FileService
+from app.services.config_service import ConfigService
 import uuid
 
 logger = logging.getLogger(__name__)
@@ -83,12 +84,11 @@ class IngestService:
                 for var, value in saved_proxies.items():
                     os.environ[var] = value
 
-        # Node parsers
-        self.node_parser = SentenceSplitter(
-            chunk_size=1024,
-            chunk_overlap=200,
-        )
-        self.markdown_node_parser = MarkdownNodeParser()
+        # Load dynamic ingestion configuration
+        self.ingestion_config = ConfigService.get_ingestion_config(db)
+        
+        # Initialize node parsers with dynamic configuration
+        self._initialize_node_parsers()
 
         # Metadata Extractors (We can use different Extractor if necessary)
 
@@ -100,6 +100,27 @@ class IngestService:
         #     questions=3,
         #     llm=self.llm,
         # )
+
+    def _initialize_node_parsers(self):
+        """Initialize node parsers with dynamic configuration."""
+        # Reload config to get latest values
+        self.ingestion_config = ConfigService.get_ingestion_config(self.db)
+        
+        chunk_size = self.ingestion_config.get("chunk_size", 1024)
+        chunk_overlap = self.ingestion_config.get("chunk_overlap", 200)
+        
+        # Sentence splitter for regular documents
+        self.node_parser = SentenceSplitter(
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+        )
+        
+        # Markdown node parser
+        self.markdown_node_parser = MarkdownNodeParser()
+        
+        logger.info(
+            f"Node parsers initialized: chunk_size={chunk_size}, chunk_overlap={chunk_overlap}"
+        )
 
     def _update_file_status(self, file_path: str, status: str) -> None:
         """Update status of uploaded file."""
@@ -150,7 +171,8 @@ class IngestService:
                     # Fallback if needed, though SimpleDirectoryReader usually adds it
                     pass
 
-            # Build pipeline
+            # Build pipeline - reload config to get latest chunk settings
+            self._initialize_node_parsers()
             transformations = [self.node_parser]
             if self.embed_model:
                 transformations.append(self.embed_model)
@@ -281,7 +303,16 @@ class IngestService:
             )
 
             # Build and run pipeline
-            transformations = [self.markdown_node_parser]
+            # Use dynamic markdown parser selection
+            markdown_parser_type = self.ingestion_config.get("markdown_parser", "markdown")
+            if markdown_parser_type == "markdown":
+                # Use MarkdownNodeParser which preserves markdown structure
+                parser = self.markdown_node_parser
+            else:
+                # Use SentenceSplitter for simple text splitting
+                parser = self.node_parser
+            
+            transformations = [parser]
 
             # Add extractors if LLM is available
             # if self.llm:

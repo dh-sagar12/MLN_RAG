@@ -35,6 +35,26 @@ class ConfigService:
             "category": "rag"
         },
         
+        # Ingestion Parameters
+        "ingestion.chunk_size": {
+            "value": 1024,
+            "type": "int",
+            "description": "Size of text chunks when splitting documents. Larger chunks preserve more context but may exceed token limits. Typical range: 512-2048.",
+            "category": "ingestion"
+        },
+        "ingestion.chunk_overlap": {
+            "value": 200,
+            "type": "int",
+            "description": "Number of characters to overlap between consecutive chunks. Overlap helps maintain context across chunk boundaries. Typically 10-20% of chunk_size.",
+            "category": "ingestion"
+        },
+        "ingestion.markdown_parser": {
+            "value": "markdown",
+            "type": "string",
+            "description": "Node parser to use for markdown documents: 'markdown' (MarkdownNodeParser - preserves structure) or 'sentence' (SentenceSplitter - simple text splitting).",
+            "category": "ingestion"
+        },
+        
         # Retriever Parameters
         "retriever.vector.top_k": {
             "value": 50,
@@ -406,5 +426,14 @@ Before outputting, verify:
             "email": ConfigService.get_config(db, "prompt.email"),
             "whatsapp": ConfigService.get_config(db, "prompt.whatsapp"),
             "query_enhancement": ConfigService.get_config(db, "prompt.query_enhancement"),
+        }
+    
+    @staticmethod
+    def get_ingestion_config(db: Session) -> Dict[str, Any]:
+        """Get ingestion-specific configuration."""
+        return {
+            "chunk_size": ConfigService.get_config(db, "ingestion.chunk_size", 1024),
+            "chunk_overlap": ConfigService.get_config(db, "ingestion.chunk_overlap", 200),
+            "markdown_parser": ConfigService.get_config(db, "ingestion.markdown_parser", "markdown"),
         }
 
