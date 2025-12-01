@@ -178,7 +178,7 @@ class RAGService:
         """
         # Use dynamic defaults from configuration if not provided
         if top_k is None:
-            top_k = self.rag_config.get("top_k")
+            top_k = self.rag_config.get("top_k") #top k for end of result
         if similarity_threshold is None:
             similarity_threshold = self.rag_config.get("similarity_threshold")
         
@@ -241,7 +241,6 @@ class RAGService:
                 db=self.db,
                 embed_model=self.embed_model,
                 similarity_threshold=similarity_threshold,
-                top_k=top_k,
                 performance_tracker=self.performance_tracker,
                 request_id=request_id,
             )
@@ -260,8 +259,9 @@ class RAGService:
             hybrid_retriever = QueryFusionRetriever(
                 retrievers=retrievers,
                 similarity_top_k=top_k,
-                num_queries=self.hybrid_config["num_queries"],
-                mode=self.hybrid_config["mode"],
+                num_queries=self.hybrid_config["num_queries"], # More than one if you want to generate multiple queries for similarity search,
+                query_gen_prompt=self.prompt_config.get("query_enhancement"), #only used when num_queris > 1
+                mode=self.hybrid_config["mode"], #options: RRF, Relative Score, Distance Base Score, Simple Score
                 use_async=False,
                 llm=self.llm,
             )
@@ -302,11 +302,11 @@ class RAGService:
                 )
 
             # Configure Response Synthesizer with dynamic response mode
-            response_mode = self.rag_config["response_mode"]
+            response_mode = self.rag_config["response_mode"] 
             response_synthesizer = get_response_synthesizer(
                 llm=self.llm,
                 text_qa_template=qa_template,
-                response_mode=response_mode,
+                response_mode=response_mode, #OPTIONSL: refine, compact, tree_sumarize, simple_summarize, accumulate,compact_accumulate, generation, no_text, context_only.
             )
 
             # Configure Query Engine

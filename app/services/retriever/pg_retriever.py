@@ -24,14 +24,13 @@ class PostgresRetriever(BaseRetriever):
         self,
         db: Session,
         embed_model: OpenAIEmbedding,
-        top_k: int,
         similarity_threshold: float,
         performance_tracker: Optional["PerformanceTracker"] = None,
         request_id: Optional[str] = None,
     ):
         self.db = db
         self.embed_model = embed_model
-        self.top_k = top_k
+        self.top_k = ConfigService.get_retriever_config(db).get('vector', {}).get('top_k')
         self.similarity_threshold = similarity_threshold
         self.performance_tracker = performance_tracker
         self.request_id = request_id
