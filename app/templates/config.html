@@ -11,20 +11,20 @@
 
     <!-- Category Tabs -->
     <div class="mb-6 border-b border-gray-200">
-        <nav class="-mb-px flex space-x-8" aria-label="Tabs">
-            <button onclick="filterCategory('')" class="category-tab border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm active" data-category="">
+        <nav class="-mb-px flex space-x-8 font-bold" aria-label="Tabs">
+            <button onclick="filterCategory('')" class="category-tab border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2  text-sm active" data-category="">
                 All Settings
             </button>
-            <button onclick="filterCategory('rag')" class="category-tab border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm" data-category="rag">
+            <button onclick="filterCategory('rag')" class="category-tab border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2  text-sm" data-category="rag">
                 RAG Parameters
             </button>
-            <button onclick="filterCategory('retriever')" class="category-tab border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm" data-category="retriever">
+            <button onclick="filterCategory('retriever')" class="category-tab border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2  text-sm" data-category="retriever">
                 Retriever Settings
             </button>
-            <button onclick="filterCategory('hybrid')" class="category-tab border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm" data-category="hybrid">
+            <button onclick="filterCategory('hybrid')" class="category-tab border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2  text-sm" data-category="hybrid">
                 Hybrid Retriever
             </button>
-            <button onclick="filterCategory('prompt')" class="category-tab border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm" data-category="prompt">
+            <button onclick="filterCategory('prompt')" class="category-tab border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2  text-sm" data-category="prompt">
                 Prompts
             </button>
         </nav>
@@ -85,8 +85,8 @@
                                     </label>
                                 {% elif config.type == 'string' and 'prompt' in config.key %}
                                     <textarea id="config-{{ config.key }}" 
-                                              class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 text-sm font-mono"
-                                              rows="8"
+                                              class="w-full px-3 py-5 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 text-sm font-mono"
+                                              rows="20"
                                               onblur="updateConfig('{{ config.key }}', this.value)">{{ config.value|safe }}</textarea>
                                 {% elif config.type == 'string' and 'mode' in config.key %}
                                     <select id="config-{{ config.key }}" 
