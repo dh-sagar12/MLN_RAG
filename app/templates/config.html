@@ -93,7 +93,7 @@
                                               class="w-full px-3 py-5 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 text-sm font-mono"
                                               rows="20"
                                               onblur="updateConfig('{{ config.key }}', this.value)">{{ config.value|safe }}</textarea>
-                                {% elif config.type == 'string' and ('mode' in config.key or 'model' in config.key) %}
+                                {% elif config.type == 'string' and ('mode' in config.key or 'model' in config.key or config.key == 'ingestion.markdown_parser') %}
                                     <select id="config-{{ config.key }}" 
                                             class="w-full max-w-xs px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 text-sm"
                                             onchange="updateConfig('{{ config.key }}', this.value)">
