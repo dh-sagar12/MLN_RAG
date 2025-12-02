@@ -16,7 +16,7 @@ A full-featured Retrieval-Augmented Generation (RAG) system that supports multip
 - **Python 3.11+**
 - **Starlette**: Lightweight ASGI framework for web server
 - **LlamaIndex**: Document processing, chunking, and embedding orchestration
-- **OpenAI**: Embeddings (text-embedding-3-small) and LLM (GPT-3.5-turbo)
+- **OpenAI**: Embeddings (text-embedding-3-small) and LLM (configurable, default: gpt-4o-mini)
 - **PostgreSQL + pgvector**: Vector database for storing embeddings
 - **SQLAlchemy**: ORM for database operations (sync with async wrapper where needed)
 - **Tailwind CSS**: Modern, utility-first CSS framework
@@ -101,7 +101,6 @@ DATABASE_URL=postgresql://postgres:postgres@localhost:5432/rag_chatbot
 # OpenAI
 OPENAI_API_KEY=your_openai_api_key_here
 OPENAI_EMBEDDING_MODEL=text-embedding-3-small
-OPENAI_LLM_MODEL=gpt-3.5-turbo
 
 # File Storage (optional)
 STORAGE_PATH=storage/uploads
@@ -110,6 +109,8 @@ STORAGE_PATH=storage/uploads
 HOST=0.0.0.0
 PORT=8000
 ```
+
+> **Note**: LLM model and temperature settings are configurable through the Configuration page in the web UI. Default values: model=`gpt-4o-mini`, temperature=`0.0`.
 
 ### 5. Initialize Database
 

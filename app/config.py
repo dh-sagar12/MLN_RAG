@@ -18,9 +18,6 @@ class Settings(BaseSettings):
     # OpenAI
     # ----------------------------------------------------------------------
     openai_api_key: Optional[str]
-    openai_embedding_model: str
-    openai_llm_model: str
-    temperature: float = 0.0
 
     # ----------------------------------------------------------------------
     # File Storage

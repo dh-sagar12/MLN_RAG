@@ -93,7 +93,7 @@
                                               class="w-full px-3 py-5 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 text-sm font-mono"
                                               rows="20"
                                               onblur="updateConfig('{{ config.key }}', this.value)">{{ config.value|safe }}</textarea>
-                                {% elif config.type == 'string' and 'mode' in config.key %}
+                                {% elif config.type == 'string' and ('mode' in config.key or 'model' in config.key) %}
                                     <select id="config-{{ config.key }}" 
                                             class="w-full max-w-xs px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 text-sm"
                                             onchange="updateConfig('{{ config.key }}', this.value)">
@@ -115,6 +115,19 @@
                                         {% elif config.key == 'ingestion.markdown_parser' %}
                                             <option value="markdown" {% if config.value == 'markdown' %}selected{% endif %}>Markdown Node Parser (preserves structure)</option>
                                             <option value="sentence" {% if config.value == 'sentence' %}selected{% endif %}>Sentence Splitter (simple text splitting)</option>
+                                        {% elif config.key == 'llm.model' %}
+                                            <option value="gpt-4o" {% if config.value == 'gpt-4o' %}selected{% endif %}>GPT-4o (Most Capable)</option>
+                                            <option value="gpt-4o-mini" {% if config.value == 'gpt-4o-mini' %}selected{% endif %}>GPT-4o Mini (Fast & Affordable)</option>
+                                            <option value="gpt-4-turbo" {% if config.value == 'gpt-4-turbo' %}selected{% endif %}>GPT-4 Turbo</option>
+                                            <option value="gpt-4" {% if config.value == 'gpt-4' %}selected{% endif %}>GPT-4</option>
+                                            <option value="gpt-3.5-turbo" {% if config.value == 'gpt-3.5-turbo' %}selected{% endif %}>GPT-3.5 Turbo (Legacy)</option>
+                                            <option value="o1" {% if config.value == 'o1' %}selected{% endif %}>O1 (Reasoning)</option>
+                                            <option value="o1-mini" {% if config.value == 'o1-mini' %}selected{% endif %}>O1 Mini (Reasoning)</option>
+                                            <option value="o1-preview" {% if config.value == 'o1-preview' %}selected{% endif %}>O1 Preview</option>
+                                        {% elif config.key == 'llm.embedding_model' %}
+                                            <option value="text-embedding-3-small" {% if config.value == 'text-embedding-3-small' %}selected{% endif %}>Text Embedding 3 Small (Fast & Affordable)</option>
+                                            <option value="text-embedding-3-large" {% if config.value == 'text-embedding-3-large' %}selected{% endif %}>Text Embedding 3 Large (Most Capable)</option>
+                                            <option value="text-embedding-ada-002" {% if config.value == 'text-embedding-ada-002' %}selected{% endif %}>Text Embedding Ada 002 (Legacy)</option>
                                         {% endif %}
                                     </select>
                                 {% else %}

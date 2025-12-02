@@ -32,6 +32,8 @@ class RAGService:
         self.db = db
         self.embed_model = None
         self.llm = None
+        
+        # Load configuration first (needed for LLM initialization)
         self._load_config()
 
         # Initialize performance tracker
@@ -63,19 +65,24 @@ class RAGService:
                     saved_proxies[var] = os.environ.pop(var)
 
             try:
+                # Get LLM config from dynamic configuration
+                llm_model = self.llm_config.get("model")
+                llm_temperature = self.llm_config.get("temperature")
+                embedding_model = self.llm_config.get("embedding_model")
+                
                 self.embed_model = OpenAIEmbedding(
-                    model=settings.openai_embedding_model,
+                    model=embedding_model,
                     api_key=settings.openai_api_key,
                 )
                 self.llm = OpenAI(
-                    model=settings.openai_llm_model,
+                    model=llm_model,
                     api_key=settings.openai_api_key,
-                    temperature=settings.temperature,
+                    temperature=llm_temperature,
                 )
                 logger.info(
-                    f"""OpenAI clients initialized (embedding: {settings.openai_embedding_model}
-                    LLM: {settings.openai_llm_model}
-                    Temperature: {settings.temperature})"""
+                    f"""OpenAI clients initialized (embedding: {embedding_model}
+                    LLM: {llm_model}
+                    Temperature: {llm_temperature})"""
                 )
                 # self.reranker = SentenceTransformerRerank(
                 #         model="cross-encoder/ms-marco-MiniLM-L-12-v2",
@@ -93,6 +100,7 @@ class RAGService:
 
     def _load_config(self):
         """Load dynamic configuration from database."""
+        self.llm_config = ConfigService.get_llm_config(self.db)
         self.rag_config = ConfigService.get_rag_config(self.db)
         self.retriever_config = ConfigService.get_retriever_config(self.db)
         self.hybrid_config = ConfigService.get_hybrid_config(self.db)
@@ -435,8 +443,8 @@ class RAGService:
 
             self.performance_tracker.record_generation(
                 request_id=request_id,
-                model_name=settings.openai_llm_model,
-                temperature=settings.temperature,
+                model_name=self.llm_config.get("model", "gpt-4o-mini"),
+                temperature=self.llm_config.get("temperature", 0.0),
                 prompt_text=template_str,
                 response_text=answer_text,
                 context_text=context_text,
@@ -448,7 +456,7 @@ class RAGService:
                 request_id, "similarity_threshold", similarity_threshold
             )
             self.performance_tracker.add_metadata(
-                request_id, "embedding_model", settings.openai_embedding_model
+                request_id, "embedding_model", self.llm_config.get("embedding_model", settings.openai_embedding_model)
             )
             self.performance_tracker.add_metadata(
                 request_id, "sources_count", len(set(sources))

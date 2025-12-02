@@ -41,6 +41,10 @@ class IngestService:
         self.embed_model = None
         self.llm = None
 
+        # Load dynamic configuration (needed for LLM initialization)
+        self.llm_config = ConfigService.get_llm_config(db)
+        self.ingestion_config = ConfigService.get_ingestion_config(db)
+
         # Initialize LlamaIndex settings
         if settings.openai_api_key:
             # Clear proxy environment variables to avoid OpenAI client initialization issues
@@ -60,6 +64,10 @@ class IngestService:
                     saved_proxies[var] = os.environ.pop(var)
 
             try:
+                # Get LLM config from dynamic configuration
+                llm_model = self.llm_config.get("model")
+                llm_temperature = self.llm_config.get("temperature")
+                
                 self.embed_model = OpenAIEmbedding(
                     model=settings.openai_embedding_model,
                     api_key=settings.openai_api_key,
@@ -67,14 +75,14 @@ class IngestService:
                 Settings.embed_model = self.embed_model
 
                 self.llm = OpenAI(
-                    model=settings.openai_llm_model,
+                    model=llm_model,
                     api_key=settings.openai_api_key,
-                    temperature=settings.temperature,
+                    temperature=llm_temperature,
                 )
                 Settings.llm = self.llm
 
                 logger.info(
-                    f"OpenAI initialized (Embedding: {settings.openai_embedding_model}, LLM: {settings.openai_llm_model})"
+                    f"OpenAI initialized (Embedding: {settings.openai_embedding_model}, LLM: {llm_model})"
                 )
             except Exception as e:
                 logger.error(f"Error initializing OpenAI clients: {e}", exc_info=True)
@@ -83,9 +91,6 @@ class IngestService:
                 # Restore proxy environment variables
                 for var, value in saved_proxies.items():
                     os.environ[var] = value
-
-        # Load dynamic ingestion configuration
-        self.ingestion_config = ConfigService.get_ingestion_config(db)
         
         # Initialize node parsers with dynamic configuration
         self._initialize_node_parsers()

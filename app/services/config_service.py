@@ -15,6 +15,26 @@ class ConfigService:
     
     # Default configuration values
     DEFAULT_CONFIG = {
+        # LLM Parameters
+        "llm.model": {
+            "value": "gpt-4o-mini",
+            "type": "string",
+            "description": "OpenAI LLM model to use for generation. Options include: gpt-4o, gpt-4o-mini, gpt-4-turbo, gpt-3.5-turbo, etc.",
+            "category": "llm"
+        },
+        "llm.temperature": {
+            "value": 0.0,
+            "type": "float",
+            "description": "Temperature for LLM generation (0-2). Lower values make output more deterministic, higher values make it more creative.",
+            "category": "llm"
+        },
+        "llm.embedding_model": {
+            "value": "text-embedding-3-small",
+            "type": "string",
+            "description": "OpenAI embedding model for vector search. Options: text-embedding-3-small (fast), text-embedding-3-large (most capable), text-embedding-ada-002 (legacy).",
+            "category": "llm"
+        },
+        
         # RAG Parameters
         "rag.top_k": {
             "value": 7,
@@ -385,6 +405,15 @@ Before outputting, verify:
             }
         
         return result
+    
+    @staticmethod
+    def get_llm_config(db: Session) -> Dict[str, Any]:
+        """Get LLM-specific configuration."""
+        return {
+            "model": ConfigService.get_config(db, "llm.model", "gpt-4o-mini"),
+            "temperature": ConfigService.get_config(db, "llm.temperature", 0.0),
+            "embedding_model": ConfigService.get_config(db, "llm.embedding_model", "text-embedding-3-small"),
+        }
     
     @staticmethod
     def get_rag_config(db: Session) -> Dict[str, Any]:
