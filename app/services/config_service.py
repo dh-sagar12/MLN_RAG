@@ -202,44 +202,52 @@ class ConfigService:
                     2. Generate one highly effective, context-aware enhanced search query that captures exactly what new information the user is seeking right now.
 
                     Available intent categories (choose all that apply):
-                    - new_information_request
-                    - clarification
-                    - follow_up
-                    - comparison
-                    - objection_concern
-                    - booking_action
-                    - general_inquiry
+                        - general_info: general questions about lodges, destinations, weather, access, facilities.
+                        - availability_pricing: checking dates, room availability, rates, but not clearly confirming a booking.
+                        - itinerary_planning: designing or discussing a multi-day trip/route or tailoring an itinerary.
+                        - new_booking: explicitly asking to confirm/book/hold a reservation.
+                        - modify_booking: changing existing booking details (dates, room type, names, add/remove nights).
+                        - cancel_refund: cancellations, refund requests, waiver/no-show discussions.
+                        - special_request: special occasions, room preferences, dietary needs, add-on services/activities.
+                        - payment_billing: invoices, payment links, bank transfer details, receipts, tax invoices.
+                        - credit_collection: agent credit terms, statements, overdue amounts, payment follow-ups.
+                        - ontrip_support: guest is already travelling and needs help or live support.
+                        - complaint_feedback: complaints or detailed feedback about service or experience.
+                        - b2b_agent_contracting: travel agents/tour operators discussing contracts, rates, allotments, series.
+                        - marketing_pr: influencers, bloggers, media, collaborations, PR.
+                        - internal_ops_admin: internal staff emails, suppliers, HR, maintenance, IT, non-guest-facing ops.
+                        - spam_other: spam, junk, or anything clearly outside business scope.
 
                     Examples:
 
                     Example 1  
                     Context: User is inquiring about Everest Base Camp trek options.  
                     Current message: "Is EBC safe right now after the recent earthquake reports?"  
-                    Intents: new_information_request, objection_concern  
+                    Intents: general_info, availability_pricing  
                     Enhanced query: "Everest Base Camp trek current safety status 2025 after recent earthquake reports infrastructure trail conditions"
 
                     Example 2  
                     Context: System just sent a detailed Annapurna Circuit 12-day itinerary with luxury lodges.  
                     Current message: "That sounds perfect but it's over my budget. Do you have a cheaper version with basic teahouses?"  
-                    Intents: follow_up, comparison, objection_concern  
+                    Intents: itinerary_planning, availability_pricing  
                     Enhanced query: "Annapurna Circuit cheaper alternative basic teahouse version same route luxury itinerary comparison 2025 pricing"
 
                     Example 3  
                     Context: User previously asked about Langtang, system answered it's open and safe.  
                     Current message: "Great, what permits do I need and how much do they cost now?"  
-                    Intents: new_information_request, follow_up  
+                    Intents: availability_pricing, general_info  
                     Enhanced query: "Langtang Valley trek current permit requirements and latest 2025 costs TIMS restricted area permit"
 
                     Example 4  
                     Context: User rejected Manaslu Circuit because too difficult. System suggested Annapurna Base Camp as easier alternative.  
                     Current message: "ABC sounds better. Can you send me the 7–9 day itinerary with difficulty level and best season?"  
-                    Intents: follow_up, new_information_request  
+                    Intents: itinerary_planning, availability_pricing  
                     Enhanced query: "Annapurna Base Camp 7-9 day itinerary moderate difficulty best season detailed day by day route"
 
                     Example 5  
                     Context: User is deciding between Mardi Himal and Ghorepani Poon Hill.  
                     Current message: "Which one has better views of Annapurna range and Machhapuchhre?"  
-                    Intents: comparison  
+                    Intents: general_info, availability_pricing  
                     Enhanced query: "Mardi Himal vs Ghorepani Poon Hill direct comparison Annapurna range and Machhapuchhre Fishtail views quality closeness panorama"
 
                     Quality rules for the enhanced query:
@@ -256,7 +264,6 @@ class ConfigService:
                         "intents": ["<intent_1>", "<intent_2>", "<intent_3>"],
                         "enhanced_query": "<enhanced_query>"
                     }}
-
             """,
             "type": "string",
             "description": "Prompt for query enhancement/optimization. Used to transform user queries into retrieval-optimized queries.",

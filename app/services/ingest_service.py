@@ -44,6 +44,7 @@ class IngestService:
         # Load dynamic configuration (needed for LLM initialization)
         self.llm_config = ConfigService.get_llm_config(db)
         self.ingestion_config = ConfigService.get_ingestion_config(db)
+        self.prompt_config = ConfigService.get_prompt_config(db)
 
         # Initialize LlamaIndex settings
         if settings.openai_api_key:
@@ -109,6 +110,7 @@ class IngestService:
         
         self.intent_extractor = IntentExtractor(
             llm=self.llm,
+            prompt=self.prompt_config.get("intent_detection")
         )
 
     def _initialize_node_parsers(self):

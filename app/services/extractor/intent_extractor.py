@@ -1,4 +1,3 @@
-
 from typing import Any, Dict, List, Optional, Sequence
 from llama_index.core.extractors import BaseExtractor
 from llama_index.core.llms import LLM
@@ -8,24 +7,9 @@ from llama_index.core.async_utils import run_jobs, DEFAULT_NUM_WORKERS
 from llama_index.core.settings import Settings
 from llama_index.core.bridge.pydantic import Field, SerializeAsAny
 
-DEFAULT_INTENT_EXTRACT_TEMPLATE = """\
-Analyze the following text and identify all user intents or query intents present.
+from app.services.config_service import ConfigService
 
-Context:
-{context_str}
-
-Based on the context above, identify ALL applicable intent categories. A query can have multiple intents. Choose from the following categories:
-- new_information_request: User is asking for new information (specific details, availability, pricing)
-- clarification: User wants clarification or more detail on a previous answer
-- follow_up: User is asking a follow-up question building on previous information
-- comparison: User wants to compare options or alternatives
-- objection_concern: User expresses concerns, objections, or dissatisfaction
-- booking_action: User shows intent to book, proceed, or take action
-- general_inquiry: General question or inquiry that doesn't fit other categories
-
-Respond with comma-separated intent category names (e.g., "new_information_request,clarification" or just "comparison" if only one applies): """
-
-
+DEFAULT_INTENT_EXTRACT_TEMPLATE = ConfigService.DEFAULT_CONFIG.get("prompt.intent_detection").get("value")
 class IntentExtractor(BaseExtractor):
     """
     Intent extractor. Node-level extractor that extracts user intent or query intent
@@ -54,7 +38,7 @@ class IntentExtractor(BaseExtractor):
         """Initialize IntentExtractor."""
         # Use provided prompt if given, otherwise use prompt_template
         template = prompt if prompt else prompt_template
-        
+
         super().__init__(
             llm=llm or Settings.llm,
             prompt_template=template,
@@ -74,34 +58,42 @@ class IntentExtractor(BaseExtractor):
             return {}
 
         context_str = node.get_content(metadata_mode=self.metadata_mode)
-        
+
         try:
             response = await self.llm.apredict(
                 PromptTemplate(template=self.prompt_template),
                 context_str=context_str,
             )
-            
+
             # Extract all intent categories from response
             response_clean = response.strip()
             response_lower = response_clean.lower()
-            
+
             # Valid intent categories
             valid_categories = [
-                "new_information_request",
-                "clarification",
-                "follow_up",
-                "comparison",
-                "objection_concern",
-                "booking_action",
-                "general_inquiry"
+                "general_info",
+                "availability_pricing",
+                "itinerary_planning",
+                "new_booking",
+                "modify_booking",
+                "cancel_refund",
+                "special_request",
+                "payment_billing",
+                "credit_collection",
+                "ontrip_support",
+                "complaint_feedback",
+                "b2b_agent_contracting",
+                "marketing_pr",
+                "internal_ops_admin",
+                "spam_other",
             ]
-            
+
             # Extract intents - can be comma-separated or on separate lines
             found_intents = []
-            
+
             # Split by comma first
             parts = [part.strip() for part in response_clean.split(",")]
-            
+
             # Check each part for valid categories
             for part in parts:
                 part_lower = part.lower()
@@ -115,21 +107,25 @@ class IntentExtractor(BaseExtractor):
                     # Try partial match if no exact match
                     for category in valid_categories:
                         category_words = category.replace("_", " ").split()
-                        if any(word in part_lower for word in category_words if len(word) > 3):
+                        if any(
+                            word in part_lower
+                            for word in category_words
+                            if len(word) > 3
+                        ):
                             if category not in found_intents:
                                 found_intents.append(category)
                             break
-            
+
             # If no intents found, try searching the whole response
             if not found_intents:
                 for category in valid_categories:
                     if category in response_lower:
                         found_intents.append(category)
-            
+
             # If still no intents found, default to general_inquiry
             if not found_intents:
                 found_intents = ["general_inquiry"]
-            
+
             return {
                 "intent_categories": found_intents,
             }
@@ -147,9 +143,7 @@ class IntentExtractor(BaseExtractor):
             intent_jobs.append(self._aextract_intent_from_node(node))
 
         metadata_list: List[Dict] = await run_jobs(
-            intent_jobs, 
-            show_progress=self.show_progress, 
-            workers=self.num_workers
+            intent_jobs, show_progress=self.show_progress, workers=self.num_workers
         )
 
         return metadata_list
