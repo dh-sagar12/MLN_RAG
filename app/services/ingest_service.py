@@ -28,7 +28,7 @@ from app.models import (
 from app.services.file_service import FileService
 from app.services.config_service import ConfigService
 import uuid
-
+from app.services.extractor import IntentExtractor
 logger = logging.getLogger(__name__)
 
 
@@ -66,10 +66,11 @@ class IngestService:
             try:
                 # Get LLM config from dynamic configuration
                 llm_model = self.llm_config.get("model")
+                embedding_model = self.llm_config.get("embedding_model")
                 llm_temperature = self.llm_config.get("temperature")
                 
                 self.embed_model = OpenAIEmbedding(
-                    model=settings.openai_embedding_model,
+                    model=embedding_model,
                     api_key=settings.openai_api_key,
                 )
                 Settings.embed_model = self.embed_model
@@ -82,7 +83,7 @@ class IngestService:
                 Settings.llm = self.llm
 
                 logger.info(
-                    f"OpenAI initialized (Embedding: {settings.openai_embedding_model}, LLM: {llm_model})"
+                    f"OpenAI initialized (Embedding: {embedding_model}, LLM: {llm_model})"
                 )
             except Exception as e:
                 logger.error(f"Error initializing OpenAI clients: {e}", exc_info=True)
@@ -105,6 +106,10 @@ class IngestService:
         #     questions=3,
         #     llm=self.llm,
         # )
+        
+        self.intent_extractor = IntentExtractor(
+            llm=self.llm,
+        )
 
     def _initialize_node_parsers(self):
         """Initialize node parsers with dynamic configuration."""
@@ -181,6 +186,14 @@ class IngestService:
             transformations = [self.node_parser]
             if self.embed_model:
                 transformations.append(self.embed_model)
+            
+            if self.intent_extractor:
+                transformations.extend(
+                    [
+                        self.intent_extractor,
+                    ]
+                )
+
 
             pipeline = IngestionPipeline(transformations=transformations)
 
@@ -244,14 +257,12 @@ class IngestService:
             transformations = [self.node_parser]
 
             # Add extractors if LLM is available
-            # if self.llm:
-            #     transformations.extend(
-            #         [
-            #             self.title_extractor,
-            #             self.questions_extractor,
-            #         ]
-            #     )
-
+            if self.intent_extractor:
+                transformations.extend(
+                    [
+                        self.intent_extractor,
+                    ]
+                )
             if self.embed_model:
                 transformations.append(self.embed_model)
 
@@ -404,6 +415,8 @@ class IngestService:
         # BUT `asyncio.to_thread` makes it concurrent.
         # If the caller waits for `process_file` to finish before doing anything else with `db`, it's "okay" but not great.
         # I'll stick to `self.db` to match original behavior but add a comment.
+        
+        # NOTE: THE ANOTHER WAY TO SAVE VECTOR EMBEDDINGS IS TO USE THE VECTOR STORE AND PASS IT TO THE INGESTION PIPELINE. FOR THAT USE `PostgresRetriever` class AND ADD `add` method there. and pass instance of it to the pipeline
 
         try:
             for emb_data in embeddings_data:

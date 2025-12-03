@@ -1,20 +1,24 @@
 """RAG service for querying across knowledge bases."""
 
+import json
 import logging
 import time
 from typing import List, Dict, Any, Optional, AsyncIterator, Set
 from llama_index.core.retrievers import QueryFusionRetriever
+from llama_index.core.vector_stores.types import MetadataFilters
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import text
 from llama_index.embeddings.openai import OpenAIEmbedding
 from llama_index.llms.openai import OpenAI
 from llama_index.core import (
+    ChatPromptTemplate,
     PromptTemplate,
     get_response_synthesizer,
 )
 from llama_index.core.query_engine import RetrieverQueryEngine
 from llama_index.core.llms import ChatMessage as LlamaChatMessage
 from app.config import settings
+from app.services.extractor import IntentMetadataFilter
 from app.services.performance_tracker import get_performance_tracker, PerformanceTracker
 from app.services.config_service import ConfigService
 import asyncio
@@ -32,7 +36,8 @@ class RAGService:
         self.db = db
         self.embed_model = None
         self.llm = None
-        
+        self.filters  = None
+
         # Load configuration first (needed for LLM initialization)
         self._load_config()
 
@@ -69,7 +74,7 @@ class RAGService:
                 llm_model = self.llm_config.get("model")
                 llm_temperature = self.llm_config.get("temperature")
                 embedding_model = self.llm_config.get("embedding_model")
-                
+
                 self.embed_model = OpenAIEmbedding(
                     model=embedding_model,
                     api_key=settings.openai_api_key,
@@ -106,10 +111,10 @@ class RAGService:
         self.hybrid_config = ConfigService.get_hybrid_config(self.db)
         self.prompt_config = ConfigService.get_prompt_config(self.db)
 
-    def get_enhanced_query(self, query_text, chat_history):
+    def _get_enhanced_query_and_intents(self, query_text, chat_history):
         """Generate enhanced query using chat history."""
         if not self.llm:
-            return query_text
+            return query_text, []
 
         # Use dynamic query enhancement prompt from config
         SYSTEM_PROMPT = self.prompt_config.get("query_enhancement")
@@ -144,7 +149,12 @@ class RAGService:
         ]
 
         response = self.llm.chat(chat_messages)
-        return str(response.message.content).strip()
+        try:
+            decoded_response = json.loads(response.message.content)
+            return decoded_response["enhanced_query"], decoded_response["intents"]
+        except Exception as e:
+            logger.error(f"Error decoding response: {e}", exc_info=True)
+            return str(response.message.content).strip(), []
 
     def get_system_prompt_for_channel(self, channel: str) -> str:
         """Return system prompt instructions tailored to a channel."""
@@ -164,6 +174,49 @@ class RAGService:
         if channel_guidance:
             return f"{base_prompt}\n\n{channel_guidance}"
         return base_prompt
+
+    def _build_qa_template(
+        self,
+        channel,
+        chat_history,
+        original_query,
+        intents,
+    ):
+        system_prompt = self.get_system_prompt_for_channel(channel)
+        # We need to include chat history in the prompt if provided
+        history_context = ""
+        if chat_history:
+            for msg in chat_history:
+                history_context += f"{msg['role']}: {msg['content']}\n"
+
+        return ChatPromptTemplate(
+            message_templates=[
+                LlamaChatMessage(
+                    role="system",
+                    content=system_prompt,
+                ),
+                LlamaChatMessage(
+                    role="user",
+                    content=f"Conversation History:\n-------------------\n{history_context}\n-------------------",
+                ),
+                LlamaChatMessage(
+                    role="user",
+                    content="Context:\n---------------------\n{context_str}\n---------------------",
+                ),
+                LlamaChatMessage(
+                    role="user",
+                    content=f"Original Query:\n-------------------\n{original_query}\n-------------------",
+                ),
+                LlamaChatMessage(
+                    role="user",
+                    content=f"Intents: {intents}",
+                ),
+                LlamaChatMessage(
+                    role="user",
+                    content="Answer the query strictly based on the above context.\n Enhanced Query: {query_str}\n",
+                ),
+            ],
+        )
 
     def query(
         self,
@@ -227,10 +280,11 @@ class RAGService:
 
             # PERFORMANCE TRACKING: Track query enhancement
             enhancement_start = time.perf_counter()
-            enhanced_query = self.get_enhanced_query(
+            enhanced_query, intents = self._get_enhanced_query_and_intents(
                 query_text=query_text,
                 chat_history=chat_history,
             )
+
             enhancement_time_ms = (time.perf_counter() - enhancement_start) * 1000
 
             logger.info(f"Enhanced query: {enhanced_query}")
@@ -247,6 +301,17 @@ class RAGService:
                     channel=channel,
                     chat_history_length=len(chat_history) if chat_history else 0,
                 )
+            # add metadata filters to the query
+
+            if self.retriever_config["vector"]["use_intent_filter"]:
+                self.filters = MetadataFilters(
+                    filters=[
+                        IntentMetadataFilter(
+                            key="intent_categories",
+                            value=intents,
+                        ),
+                    ]
+                )
 
             # Initialize Retriever with performance tracking and dynamic config
             vector_retriever = PostgresRetriever(
@@ -255,6 +320,7 @@ class RAGService:
                 similarity_threshold=similarity_threshold,
                 performance_tracker=self.performance_tracker,
                 request_id=request_id,
+                metadata_filters=self.filters,
             )
 
             # Build retrievers list based on BM25 enabled setting
@@ -287,28 +353,12 @@ class RAGService:
 
             # Build Prompt Template
             prompt_construction_start = time.perf_counter()
-            system_message = self.get_system_prompt_for_channel(channel)
-            # We need to include chat history in the prompt if provided
-            history_context = ""
-            if chat_history:
-                for msg in chat_history:
-                    history_context += f"{msg['role']}: {msg['content']}\n"
-
-            # LlamaIndex text_qa_template expects 'context_str' and 'query_str'
-            template_str = (
-                f"{system_message}\n\n"
-                f"Conversation History:\n{history_context}\n\n"
-                "Context information is below.\n"
-                "---------------------\n"
-                "{context_str}\n"
-                "---------------------\n"
-                "Given the context information and not prior knowledge, "
-                "answer the query.\n"
-                "Query: {query_str}\n"
-                "Answer: "
+            qa_template = self._build_qa_template(
+                channel=channel,
+                chat_history=chat_history,
+                original_query=query_text,
+                intents=intents,
             )
-
-            qa_template = PromptTemplate(template_str)
             prompt_construction_time_ms = (
                 time.perf_counter() - prompt_construction_start
             ) * 1000
@@ -378,7 +428,7 @@ class RAGService:
                 top_k=top_k,
                 similarity_threshold=similarity_threshold,
                 kbs_used=kbs_used,
-                template_str=template_str,
+                template_str=qa_template,
                 answer_text=answer_text,
                 context_text=context_text,
                 sources=sources,
@@ -424,7 +474,7 @@ class RAGService:
         top_k: int,
         similarity_threshold: float,
         kbs_used: Set[str],
-        template_str: str,
+        template_str: ChatPromptTemplate,
         answer_text: str,
         context_text: str,
         sources: List[str],
@@ -451,15 +501,23 @@ class RAGService:
             )
 
             # Add additional metadata
-            self.performance_tracker.add_metadata(request_id, "top_k", top_k)
             self.performance_tracker.add_metadata(
-                request_id, "similarity_threshold", similarity_threshold
+                request_id=request_id,
+                key="top_k",
+                value=top_k,
             )
             self.performance_tracker.add_metadata(
-                request_id, "embedding_model", self.llm_config.get("embedding_model", settings.openai_embedding_model)
+                request_id=request_id,
+                key="similarity_threshold",
+                value=similarity_threshold,
             )
             self.performance_tracker.add_metadata(
-                request_id, "sources_count", len(set(sources))
+                request_id=request_id,
+                key="embedding_model",
+                value=self.llm_config.get("embedding_model"),
+            )
+            self.performance_tracker.add_metadata(
+                request_id=request_id, key="sources_count", value=len(set(sources))
             )
 
     async def stream_query(self, query_text: str, top_k: int = 5) -> AsyncIterator[str]:

@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 class ConfigService:
     """Service for managing application configuration."""
-    
+
     # Default configuration values
     DEFAULT_CONFIG = {
         # LLM Parameters
@@ -20,313 +20,272 @@ class ConfigService:
             "value": "gpt-4o-mini",
             "type": "string",
             "description": "OpenAI LLM model to use for generation. Options include: gpt-4o, gpt-4o-mini, gpt-4-turbo, gpt-3.5-turbo, etc.",
-            "category": "llm"
+            "category": "llm",
         },
         "llm.temperature": {
             "value": 0.0,
             "type": "float",
             "description": "Temperature for LLM generation (0-2). Lower values make output more deterministic, higher values make it more creative.",
-            "category": "llm"
+            "category": "llm",
         },
         "llm.embedding_model": {
-            "value": "text-embedding-3-small",
+            "value": "text-embedding-ada-002",
             "type": "string",
             "description": "OpenAI embedding model for vector search. Options: text-embedding-3-small (fast), text-embedding-3-large (most capable), text-embedding-ada-002 (legacy).",
-            "category": "llm"
+            "category": "llm",
         },
-        
         # RAG Parameters
         "rag.top_k": {
             "value": 7,
             "type": "int",
             "description": "Number of top chunks to retrieve from the knowledge base. Higher values provide more context but may include less relevant information.",
-            "category": "rag"
+            "category": "rag",
         },
         "rag.similarity_threshold": {
             "value": 0.75,
             "type": "float",
             "description": "Minimum similarity score (0-1) for retrieved chunks. Higher values return more relevant but fewer results.",
-            "category": "rag"
+            "category": "rag",
         },
         "rag.response_mode": {
             "value": "compact",
             "type": "string",
             "description": "Response synthesis mode: 'compact' (faster, combines chunks), 'refine' (iterative refinement), 'tree_summarize' (tree-based), 'simple_summarize' (single call), 'accumulate' (concatenate all), or 'generation' (ignore context).",
-            "category": "rag"
+            "category": "rag",
         },
-        
         # Ingestion Parameters
         "ingestion.chunk_size": {
             "value": 1024,
             "type": "int",
             "description": "Size of text chunks when splitting documents. Larger chunks preserve more context but may exceed token limits. Typical range: 512-2048.",
-            "category": "ingestion"
+            "category": "ingestion",
         },
         "ingestion.chunk_overlap": {
             "value": 200,
             "type": "int",
             "description": "Number of characters to overlap between consecutive chunks. Overlap helps maintain context across chunk boundaries. Typically 10-20% of chunk_size.",
-            "category": "ingestion"
+            "category": "ingestion",
         },
         "ingestion.markdown_parser": {
             "value": "markdown",
             "type": "string",
             "description": "Node parser to use for markdown documents: 'markdown' (MarkdownNodeParser - preserves structure) or 'sentence' (SentenceSplitter - simple text splitting).",
-            "category": "ingestion"
+            "category": "ingestion",
         },
-        
         # Retriever Parameters
         "retriever.vector.top_k": {
             "value": 50,
             "type": "int",
             "description": "Maximum number of chunks to retrieve from vector search before filtering by similarity threshold.",
-            "category": "retriever"
+            "category": "retriever",
         },
         "retriever.vector.ef_search": {
             "value": 256,
             "type": "int",
             "description": "HNSW index search parameter. Higher values improve recall but slow down search. Typical range: 64-512.",
-            "category": "retriever"
+            "category": "retriever",
+        },
+        "retriever.vector.use_intent_filter": {
+            "value": True,
+            "type": "bool",
+            "description": "Enable intent-based filtering of retrieved chunks. When enabled, only chunks with the specified intents will be retrieved.",
+            "category": "retriever",
         },
         "retriever.bm25.top_k": {
             "value": 50,
             "type": "int",
             "description": "Maximum number of chunks to retrieve from BM25 keyword search.",
-            "category": "retriever"
+            "category": "retriever",
         },
         "retriever.bm25.enabled": {
             "value": True,
             "type": "bool",
             "description": "Enable BM25 keyword-based retrieval. When enabled, combines with vector search for hybrid retrieval.",
-            "category": "retriever"
+            "category": "retriever",
         },
         "retriever.bm25.language": {
             "value": "english",
             "type": "string",
             "description": "Language for BM25 full-text search. Must match PostgreSQL text search configuration.",
-            "category": "retriever"
+            "category": "retriever",
         },
-        
         # Hybrid Retriever Parameters
         "hybrid.mode": {
             "value": "reciprocal_rerank",
             "type": "string",
             "description": "Fusion mode for combining results: 'reciprocal_rerank' (Reciprocal Rank Fusion), 'relative_score' (relative scoring), 'dist_based_score' (distance-based), or 'simple' (simple reordering).",
-            "category": "hybrid"
+            "category": "hybrid",
         },
         "hybrid.num_queries": {
             "value": 1,
             "type": "int",
             "description": "Number of query variations to generate for retrieval. Higher values improve recall but increase latency.",
-            "category": "hybrid"
+            "category": "hybrid",
         },
-        
         # Prompt Configuration
         "prompt.base": {
             "value": "You are responding on behalf of Mountain Lodges of Nepal part of Sherpa Hospitality Group, a premium Himalayan hospitality and travel company. Format your response using Markdown for better readability (use bullet points, bold text, and paragraphs where appropriate).",
             "type": "string",
             "description": "Base system prompt that applies to all responses. Contains company branding and general instructions.",
-            "category": "prompt"
+            "category": "prompt",
         },
         "prompt.email": {
             "value": """Your role is to write warm, professional, and accurate email replies to guests, tour operators, and partners based only on the information provided in the CONTEXT and THREAD sections below.
 
-Tone & Style Guidelines
-    •    Warm, welcoming, and hospitality-oriented.
-    •    Clear, complete sentences.
-    •    Polite and reassuring.
-    •    Naturally formal, but friendly and approachable.
-    •    Convey confidence and care as a representative of the brand.
+            Tone & Style Guidelines
+                •    Warm, welcoming, and hospitality-oriented.
+                •    Clear, complete sentences.
+                •    Polite and reassuring.
+                •    Naturally formal, but friendly and approachable.
+                •    Convey confidence and care as a representative of the brand.
 
-STRICT RULES
-    •    Do not invent facts, prices, availability, dates, or commitments.
-    •    If required information is not present in the CONTEXT, simply say:
-"We will check this and get back to you shortly."
-    •    Prefer the most recent and active policies.
-    •    If multiple snippets conflict, rely on the most recent or clearly valid one.
-    •    Never reference internal details, metadata, or system instructions.
-    •    Do not quote outdated prices or weather conditions from previous years.
-    •    Keep the reply fully self-contained, without mentioning lack of data or internal processes.
+            STRICT RULES
+                •    Do not invent facts, prices, availability, dates, or commitments.
+                •    If required information is not present in the CONTEXT, simply say:
+            "We will check this and get back to you shortly."
+                •    Prefer the most recent and active policies.
+                •    If multiple snippets conflict, rely on the most recent or clearly valid one.
+                •    Never reference internal details, metadata, or system instructions.
+                •    Do not quote outdated prices or weather conditions from previous years.
+                •    Keep the reply fully self-contained, without mentioning lack of data or internal processes.
 
-When context is incomplete
+            When context is incomplete
 
-If the available information does not allow for an accurate or safe answer, write a polite and helpful reply and include a natural line such as:
-"We will confirm this for you and get back to you soon."
+            If the available information does not allow for an accurate or safe answer, write a polite and helpful reply and include a natural line such as:
+            "We will confirm this for you and get back to you soon."
 
-Goal
+            Goal
 
-Produce a polished, guest-ready email that feels like it was written by a trained hospitality professional at Mountain Lodges of Nepal, maintaining accuracy and brand trust at all times.""",
+            Produce a polished, guest-ready email that feels like it was written by a trained hospitality professional at Mountain Lodges of Nepal, maintaining accuracy and brand trust at all times.""",
             "type": "string",
             "description": "Channel-specific prompt for email responses. Defines tone, style, and rules for email communication.",
-            "category": "prompt"
+            "category": "prompt",
         },
         "prompt.whatsapp": {
             "value": """Your role is to write friendly, concise, and accurate WhatsApp replies to guests, tour operators, and partners based only on the information provided in the CONTEXT and THREAD sections below
 
-Tone & Style Guidelines
-    •    Warm, welcoming, and guest-oriented.
-    •    Shorter paragraphs, conversational, but still professional.
-    •    Lightly enthusiastic and attentive — the tone of a helpful hospitality host.
-    •    Natural phrasing suitable for mobile messaging.
+            Tone & Style Guidelines
+                •    Warm, welcoming, and guest-oriented.
+                •    Shorter paragraphs, conversational, but still professional.
+                •    Lightly enthusiastic and attentive — the tone of a helpful hospitality host.
+                •    Natural phrasing suitable for mobile messaging.
 
-STRICT RULES
-    •    Never invent prices, availability, dates, or operational details.
-    •    If a guest asks for something not present in the CONTEXT, simply say:
-"We'll check this and get back to you shortly."
-    •    Use only the most recent and active details.
-    •    If conflicting information appears, use the most updated one.
-    •    Do not reveal that you are using AI or systems.
-    •    Do not include internal notes, metadata, or technical labels.
-    •    Avoid quoting outdated seasonal details or old prices.
+            STRICT RULES
+                •    Never invent prices, availability, dates, or operational details.
+                •    If a guest asks for something not present in the CONTEXT, simply say:
+            "We'll check this and get back to you shortly."
+                •    Use only the most recent and active details.
+                •    If conflicting information appears, use the most updated one.
+                •    Do not reveal that you are using AI or systems.
+                •    Do not include internal notes, metadata, or technical labels.
+                •    Avoid quoting outdated seasonal details or old prices.
 
-When context is incomplete
+            When context is incomplete
 
-Keep the reply helpful and friendly, and add:
-"We'll confirm the details and update you soon."
+            Keep the reply helpful and friendly, and add:
+            "We'll confirm the details and update you soon."
 
-Goal
+            Goal
 
-Produce a natural, helpful WhatsApp message that feels like a real team member of Mountain Lodges of Nepal — supportive, accurate, and hospitality-driven.""",
+            Produce a natural, helpful WhatsApp message that feels like a real team member of Mountain Lodges of Nepal — supportive, accurate, and hospitality-driven.""",
             "type": "string",
             "description": "Channel-specific prompt for WhatsApp responses. Defines tone, style, and rules for WhatsApp communication.",
-            "category": "prompt"
+            "category": "prompt",
         },
         "prompt.query_enhancement": {
-            "value": """You are a query optimization system for a RAG-based response drafting assistant serving a trekking company in Nepal.
+            "value": f"""\
+                    You are an expert at understanding trekking in Nepal and at understanding customer intent in travel conversations.
 
-## Your Task
-Transform the user's current message into a precise, retrieval-optimized query that fetches ONLY the missing information needed to draft an accurate  response.
+                    Analyze the full conversation context and the current user message to:
 
-## Analysis Framework
+                    1. Identify ALL applicable user intents (a query can have multiple).
+                    2. Generate one highly effective, context-aware enhanced search query that captures exactly what new information the user is seeking right now.
 
-### Step 1: Parse Conversation State
-Examine the conversation history and identify:
-- **Already Addressed**: Topics/questions already answered with specific details (itinerary days, pricing, difficulty ratings, permit requirements, etc.)
-- **Partially Addressed**: Topics mentioned but lacking depth or specific details the user is now asking about
-- **Pending**: New questions or topics not yet covered
-- **User Intent Shift**: Has the user changed topic, expressed dissatisfaction, or requested clarification?
+                    Available intent categories (choose all that apply):
+                    - new_information_request
+                    - clarification
+                    - follow_up
+                    - comparison
+                    - objection_concern
+                    - booking_action
+                    - general_inquiry
 
-### Step 2: Identify Current User Intent
-Determine what the user wants RIGHT NOW:
-- New information request (specific trek details, availability, pricing)
-- Clarification of previous answer (more detail on X, alternative for Y)
-- Follow-up question (building on previous answer)
-- Comparison request (Trek A vs Trek B)
-- Objection/concern handling (too difficult, too expensive, wrong season)
-- Booking/action intent (ready to book, wants to proceed)
+                    Examples:
 
-### Step 3: Extract Missing Information Gaps
-Identify EXACTLY what's missing from the knowledge base to answer the current query:
-- Specific trek names, routes, or regions
-- Date ranges, seasonal information, or availability
-- Difficulty levels, fitness requirements, or technical details
-- Cost breakdowns, inclusions/exclusions, or payment terms
-- Logistics (permits, guides, accommodation, transportation)
-- Customization options or alternatives
+                    Example 1  
+                    Context: User is inquiring about Everest Base Camp trek options.  
+                    Current message: "Is EBC safe right now after the recent earthquake reports?"  
+                    Intents: new_information_request, objection_concern  
+                    Enhanced query: "Everest Base Camp trek current safety status 2025 after recent earthquake reports infrastructure trail conditions"
 
-### Step 4: Query Construction Rules
+                    Example 2  
+                    Context: System just sent a detailed Annapurna Circuit 12-day itinerary with luxury lodges.  
+                    Current message: "That sounds perfect but it's over my budget. Do you have a cheaper version with basic teahouses?"  
+                    Intents: follow_up, comparison, objection_concern  
+                    Enhanced query: "Annapurna Circuit cheaper alternative basic teahouse version same route luxury itinerary comparison 2025 pricing"
 
-**INCLUDE in enhanced query:**
-- Specific trek names, locations, or route identifiers
-- Timeframes (months, seasons, specific dates if mentioned)
-- Quantifiable parameters (days, altitude, distance, price range)
-- Comparison criteria (if user asks "vs" or "alternative")
-- Technical requirements (permits, fitness level, equipment)
-- New topics or details not yet provided
+                    Example 3  
+                    Context: User previously asked about Langtang, system answered it's open and safe.  
+                    Current message: "Great, what permits do I need and how much do they cost now?"  
+                    Intents: new_information_request, follow_up  
+                    Enhanced query: "Langtang Valley trek current permit requirements and latest 2025 costs TIMS restricted area permit"
 
-**EXCLUDE from enhanced query:**
-- Any information already retrieved and presented
-- Details the user acknowledged or didn't question
-- Context already established in prior responses
-- User's personal background unless it changes the query scope
+                    Example 4  
+                    Context: User rejected Manaslu Circuit because too difficult. System suggested Annapurna Base Camp as easier alternative.  
+                    Current message: "ABC sounds better. Can you send me the 7–9 day itinerary with difficulty level and best season?"  
+                    Intents: follow_up, new_information_request  
+                    Enhanced query: "Annapurna Base Camp 7-9 day itinerary moderate difficulty best season detailed day by day route"
 
-**Special Cases:**
-- If user says "tell me more about X" → Query: "detailed information about X [specific aspect they want]"
-- If user expresses concern → Query: "[concern topic] + alternatives/solutions"
-- If user asks "what about Y?" after discussing X → Query: "Y [specific aspect]" (don't re-query X)
-- If user asks for comparison → Query: "[Trek A] vs [Trek B] [specific comparison dimension]"
+                    Example 5  
+                    Context: User is deciding between Mardi Himal and Ghorepani Poon Hill.  
+                    Current message: "Which one has better views of Annapurna range and Machhapuchhre?"  
+                    Intents: comparison  
+                    Enhanced query: "Mardi Himal vs Ghorepani Poon Hill direct comparison Annapurna range and Machhapuchhre Fishtail views quality closeness panorama"
 
-## Output Format
+                    Quality rules for the enhanced query:
+                    - Make it 12–25 words (longer is fine if it adds crucial context)
+                    - Make it a natural but highly specific search phrase that includes ALL relevant context from the entire conversation
+                    - Target ONLY the NEW information the user is seeking right now
+                    - Use the most knowledge-base-friendly keywords (route names, difficulty, season, year 2025/2026, budget level, teahouse/lodge type, specific peaks, etc.)
+                    - Never include information already provided in previous answers
+                    - Make it precise enough that searching this exact phrase would return the perfect result
 
-Provide ONLY the enhanced query in the plain text format without any other text or formatting:
+                    Output format (JSON format):
+                    {{
+                        
+                        "intents": ["<intent_1>", "<intent_2>", "<intent_3>"],
+                        "enhanced_query": "<enhanced_query>"
+                    }}
 
-<retrieval-optimized query>
-
-### Query Optimization Guidelines:
-- Use 3-8 words maximum (except for complex comparisons)
-- Lead with the most specific identifier (trek name, location, topic)
-- Include only searchable, factual terms (not conversational filler)
-- Use keywords that match knowledge base terminology (e.g., "Annapurna Circuit itinerary 12 days" not "tell me what happens each day on the Annapurna trek")
-- For clarifications, focus on the sub-topic: "Everest Base Camp acclimatization schedule" not "more details about EBC"
-
-## Examples
-
-### Example 1
-**Previous:** User asked about Everest Base Camp trek. System provided: 12-day itinerary, difficulty level (moderate-challenging), best seasons (March-May, September-November).
-
-**Current User Message:** "What about the permits and costs?"
-
-**Analysis:** Itinerary and difficulty already covered. User now needs permit information and pricing.
-
-**ENHANCED_QUERY:** `Everest Base Camp permits costs pricing`
-
----
-
-### Example 2
-**Previous:** User asked about treks in Annapurna region. System provided: overview of Annapurna Circuit and Annapurna Base Camp trek options.
-
-**Current User Message:** "I only have 7 days. Which one can I do?"
-
-**Analysis:** User has time constraint (7 days). Need short trek options in Annapurna region.
-
-**ENHANCED_QUERY:** `Annapurna region treks 7 days short itinerary`
-
----
-
-### Example 3
-**Previous:** User asked about Langtang Valley trek. System provided: 7-day itinerary, moderate difficulty, best seasons.
-
-**Current User Message:** "Is it safe? I heard about the earthquake."
-
-**Analysis:** User has safety concerns about Langtang post-earthquake. Need current safety status and infrastructure info.
-
-**ENHANCED_QUERY:** `Langtang Valley current safety status infrastructure`
-
----
-
-### Example 4
-**Previous:** User asked about Manaslu Circuit. System provided: 14-day itinerary, challenging difficulty, permit requirements.
-
-**Current User Message:** "That sounds too hard. What's an easier alternative with similar views?"
-
-**Analysis:** User finds Manaslu too difficult. Needs easier trek alternatives with comparable mountain scenery.
-
-**ENHANCED_QUERY:** `moderate difficulty treks similar views Manaslu alternative`
-
----
-
-### Example 5
-**Previous:** User asked about October availability for Annapurna Circuit. System confirmed October is peak season with good availability.
-
-**Current User Message:** "Great! What's included in the package price?"
-
-**Analysis:** Availability confirmed. Now user needs package inclusions/exclusions breakdown.
-
-**ENHANCED_QUERY:** `Annapurna Circuit package inclusions exclusions`
-
-## Quality Checklist
-Before outputting, verify:
-- Query targets NEW information only
-- Query is 3-8 words (concise and specific)
-- Query uses knowledge-base-friendly keywords
-- Query matches the user's current intent
-- No redundant information already provided""",
+            """,
             "type": "string",
             "description": "Prompt for query enhancement/optimization. Used to transform user queries into retrieval-optimized queries.",
-            "category": "prompt"
+            "category": "prompt",
+        },
+        "prompt.intent_detection": {
+            "value": """\
+                Analyze the following text and identify all user intents or query intents present.
+
+                Context:
+                {context_str}
+
+                Based on the context above, identify ALL applicable intent categories. A query can have multiple intents. Choose from the following categories:
+                - new_information_request: User is asking for new information (specific details, availability, pricing)
+                - clarification: User wants clarification or more detail on a previous answer
+                - follow_up: User is asking a follow-up question building on previous information
+                - comparison: User wants to compare options or alternatives
+                - objection_concern: User expresses concerns, objections, or dissatisfaction
+                - booking_action: User shows intent to book, proceed, or take action
+                - general_inquiry: General question or inquiry that doesn't fit other categories
+
+                Respond with comma-separated intent category names (e.g., "new_information_request,clarification" or just "comparison" if only one applies): 
+            """,
+            "type": "string",
+            "description": "Prompt for intent detection. Used to identify user intents or query intents from text.",
+            "category": "prompt",
         },
     }
-    
+
     @staticmethod
     def initialize_defaults(db: Session) -> None:
         """Initialize default configuration values if they don't exist."""
@@ -334,37 +293,39 @@ Before outputting, verify:
             existing = db.execute(
                 select(Configuration).where(Configuration.key == key)
             ).scalar_one_or_none()
-            
+
             if not existing:
                 config = Configuration(
                     key=key,
                     category=config_data["category"],
-                    description=config_data["description"]
+                    description=config_data["description"],
                 )
                 config.set_typed_value(config_data["value"])
                 db.add(config)
                 logger.info(f"Initialized default configuration: {key}")
-        
+
         db.commit()
-    
+
     @staticmethod
     def get_config(db: Session, key: str, default: Any = None) -> Any:
         """Get configuration value by key."""
         config = db.execute(
             select(Configuration).where(Configuration.key == key)
         ).scalar_one_or_none()
-        
+
         if config:
             return config.get_typed_value()
         return default
-    
+
     @staticmethod
-    def set_config(db: Session, key: str, value: Any, description: Optional[str] = None) -> Configuration:
+    def set_config(
+        db: Session, key: str, value: Any, description: Optional[str] = None
+    ) -> Configuration:
         """Set configuration value by key."""
         config = db.execute(
             select(Configuration).where(Configuration.key == key)
         ).scalar_one_or_none()
-        
+
         if config:
             config.set_typed_value(value)
             if description:
@@ -375,15 +336,15 @@ Before outputting, verify:
             config = Configuration(
                 key=key,
                 category=default_data.get("category", "general"),
-                description=description or default_data.get("description")
+                description=description or default_data.get("description"),
             )
             config.set_typed_value(value)
             db.add(config)
-        
+
         db.commit()
         db.refresh(config)
         return config
-    
+
     @staticmethod
     def get_all_configs(db: Session, category: Optional[str] = None) -> Dict[str, Any]:
         """Get all configurations, optionally filtered by category."""
@@ -391,9 +352,9 @@ Before outputting, verify:
         if category:
             query = query.where(Configuration.category == category)
         query = query.order_by(Configuration.category, Configuration.key)
-        
+
         configs = db.execute(query).scalars().all()
-        
+
         result = {}
         for config in configs:
             result[config.key] = {
@@ -401,29 +362,35 @@ Before outputting, verify:
                 "type": config.value_type,
                 "description": config.description,
                 "category": config.category,
-                "updated_at": config.updated_at.isoformat() if config.updated_at else None
+                "updated_at": (
+                    config.updated_at.isoformat() if config.updated_at else None
+                ),
             }
-        
+
         return result
-    
+
     @staticmethod
     def get_llm_config(db: Session) -> Dict[str, Any]:
         """Get LLM-specific configuration."""
         return {
             "model": ConfigService.get_config(db, "llm.model", "gpt-4o-mini"),
             "temperature": ConfigService.get_config(db, "llm.temperature", 0.0),
-            "embedding_model": ConfigService.get_config(db, "llm.embedding_model", "text-embedding-3-small"),
+            "embedding_model": ConfigService.get_config(
+                db, "llm.embedding_model", "text-embedding-ada-002"
+            ),
         }
-    
+
     @staticmethod
     def get_rag_config(db: Session) -> Dict[str, Any]:
         """Get RAG-specific configuration."""
         return {
             "top_k": ConfigService.get_config(db, "rag.top_k"),
-            "similarity_threshold": ConfigService.get_config(db, "rag.similarity_threshold"),
+            "similarity_threshold": ConfigService.get_config(
+                db, "rag.similarity_threshold"
+            ),
             "response_mode": ConfigService.get_config(db, "rag.response_mode"),
         }
-    
+
     @staticmethod
     def get_retriever_config(db: Session) -> Dict[str, Any]:
         """Get retriever-specific configuration."""
@@ -431,14 +398,15 @@ Before outputting, verify:
             "vector": {
                 "top_k": ConfigService.get_config(db, "retriever.vector.top_k"),
                 "ef_search": ConfigService.get_config(db, "retriever.vector.ef_search"),
+                "use_intent_filter": ConfigService.get_config(db, "retriever.vector.use_intent_filter"),
             },
             "bm25": {
                 "enabled": ConfigService.get_config(db, "retriever.bm25.enabled"),
                 "top_k": ConfigService.get_config(db, "retriever.bm25.top_k"),
                 "language": ConfigService.get_config(db, "retriever.bm25.language"),
-            }
+            },
         }
-    
+
     @staticmethod
     def get_hybrid_config(db: Session) -> Dict[str, Any]:
         """Get hybrid retriever configuration."""
@@ -446,7 +414,7 @@ Before outputting, verify:
             "mode": ConfigService.get_config(db, "hybrid.mode"),
             "num_queries": ConfigService.get_config(db, "hybrid.num_queries"),
         }
-    
+
     @staticmethod
     def get_prompt_config(db: Session) -> Dict[str, str]:
         """Get prompt configuration."""
@@ -454,15 +422,21 @@ Before outputting, verify:
             "base": ConfigService.get_config(db, "prompt.base"),
             "email": ConfigService.get_config(db, "prompt.email"),
             "whatsapp": ConfigService.get_config(db, "prompt.whatsapp"),
-            "query_enhancement": ConfigService.get_config(db, "prompt.query_enhancement"),
+            "query_enhancement": ConfigService.get_config(
+                db, "prompt.query_enhancement"
+            ),
+            "intent_detection": ConfigService.get_config(db, "prompt.intent_detection"),
         }
-    
+
     @staticmethod
     def get_ingestion_config(db: Session) -> Dict[str, Any]:
         """Get ingestion-specific configuration."""
         return {
             "chunk_size": ConfigService.get_config(db, "ingestion.chunk_size", 1024),
-            "chunk_overlap": ConfigService.get_config(db, "ingestion.chunk_overlap", 200),
-            "markdown_parser": ConfigService.get_config(db, "ingestion.markdown_parser", "markdown"),
+            "chunk_overlap": ConfigService.get_config(
+                db, "ingestion.chunk_overlap", 200
+            ),
+            "markdown_parser": ConfigService.get_config(
+                db, "ingestion.markdown_parser", "markdown"
+            ),
         }
-

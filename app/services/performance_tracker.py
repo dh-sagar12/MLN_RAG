@@ -33,6 +33,8 @@ from collections import defaultdict
 import statistics
 import atexit
 
+from llama_index.core import ChatPromptTemplate
+
 logger = logging.getLogger(__name__)
 
 
@@ -459,7 +461,6 @@ class PerformanceTracker:
                 scores.append(float(score))
                 
                 # Extract chunk ID
-                print(chunk, 'CHUNK')
                 chunk_id = chunk.get("metadata", {}).get("embedding_id", "")
                 if not chunk_id:
                     # Generate a hash-based ID if none exists
@@ -512,13 +513,15 @@ class PerformanceTracker:
         request_id: str,
         model_name: str,
         temperature: float,
-        prompt_text: str,
+        prompt_text: ChatPromptTemplate,
         response_text: str,
         context_text: str = "",
         input_tokens: Optional[int] = None,
         output_tokens: Optional[int] = None,
     ) -> None:
         """Record generation-related metrics."""
+        
+        prompt_text_str = prompt_text.format_messages()
         with self._lock:
             if request_id not in self._active_records:
                 return
@@ -527,7 +530,7 @@ class PerformanceTracker:
             
             record.generation.model_name = model_name
             record.generation.temperature = temperature
-            record.generation.prompt_length_chars = len(prompt_text)
+            record.generation.prompt_length_chars = len(prompt_text_str)
             record.generation.response_length_chars = len(response_text)
             record.generation.context_length_chars = len(context_text)
             
@@ -536,12 +539,12 @@ class PerformanceTracker:
                 record.generation.input_tokens = input_tokens
             else:
                 # Rough estimate: ~4 chars per token for English
-                record.generation.input_tokens = len(prompt_text) // 4
+                record.generation.input_tokens = len(prompt_text_str) // 4
             
             if output_tokens is not None:
                 record.generation.output_tokens = output_tokens
             else:
-                record.generation.output_tokens = len(response_text) // 4
+                record.generation.output_tokens = len(prompt_text_str) // 4
             
             record.generation.total_tokens = (
                 record.generation.input_tokens + record.generation.output_tokens
