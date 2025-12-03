@@ -149,6 +149,7 @@ class RAGService:
         ]
 
         response = self.llm.chat(chat_messages)
+        print(response.message.content, "Response")
         try:
             decoded_response = json.loads(response.message.content)
             return decoded_response["enhanced_query"], decoded_response["intents"]
