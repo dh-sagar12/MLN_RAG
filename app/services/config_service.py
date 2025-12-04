@@ -277,15 +277,24 @@ class ConfigService:
                 {context_str}
 
                 Based on the context above, identify ALL applicable intent categories. A query can have multiple intents. Choose from the following categories:
-                - new_information_request: User is asking for new information (specific details, availability, pricing)
-                - clarification: User wants clarification or more detail on a previous answer
-                - follow_up: User is asking a follow-up question building on previous information
-                - comparison: User wants to compare options or alternatives
-                - objection_concern: User expresses concerns, objections, or dissatisfaction
-                - booking_action: User shows intent to book, proceed, or take action
-                - general_inquiry: General question or inquiry that doesn't fit other categories
 
-                Respond with comma-separated intent category names (e.g., "new_information_request,clarification" or just "comparison" if only one applies): 
+                - general_info: general questions about lodges, destinations, weather, access, facilities.
+                - availability_pricing: checking dates, room availability, rates, but not clearly confirming a booking.
+                - itinerary_planning: designing or discussing a multi-day trip/route or tailoring an itinerary.
+                - new_booking: explicitly asking to confirm/book/hold a reservation.
+                - modify_booking: changing existing booking details (dates, room type, names, add/remove nights).
+                - cancel_refund: cancellations, refund requests, waiver/no-show discussions.
+                - special_request: special occasions, room preferences, dietary needs, add-on services/activities.
+                - payment_billing: invoices, payment links, bank transfer details, receipts, tax invoices.
+                - credit_collection: agent credit terms, statements, overdue amounts, payment follow-ups.
+                - ontrip_support: guest is already travelling and needs help or live support.
+                - complaint_feedback: complaints or detailed feedback about service or experience.
+                - b2b_agent_contracting: travel agents/tour operators discussing contracts, rates, allotments, series.
+                - marketing_pr: influencers, bloggers, media, collaborations, PR.
+                - internal_ops_admin: internal staff emails, suppliers, HR, maintenance, IT, non-guest-facing ops.
+                - spam_other: spam, junk, or anything clearly outside business scope.
+
+                Respond with comma-separated intent category names: 
             """,
             "type": "string",
             "description": "Prompt for intent detection. Used to identify user intents or query intents from text.",
