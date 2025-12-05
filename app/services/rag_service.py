@@ -24,6 +24,7 @@ from app.services.config_service import ConfigService
 import asyncio
 from app.services.prompt import ENHANCED_QUERY_PROMPT
 from app.services.retriever import BM25Retriever, PostgresRetriever
+from llama_index.core.postprocessor import SentenceTransformerRerank
 
 
 logger = logging.getLogger(__name__)
@@ -36,7 +37,7 @@ class RAGService:
         self.db = db
         self.embed_model = None
         self.llm = None
-        self.filters  = None
+        self.filters = None
 
         # Load configuration first (needed for LLM initialization)
         self._load_config()
@@ -89,10 +90,6 @@ class RAGService:
                     LLM: {llm_model}
                     Temperature: {llm_temperature})"""
                 )
-                # self.reranker = SentenceTransformerRerank(
-                #         model="cross-encoder/ms-marco-MiniLM-L-12-v2",
-                #         top_n=10
-                #     )
             except Exception as e:
                 logger.error(f"Error initializing OpenAI clients: {e}", exc_info=True)
                 raise
@@ -376,11 +373,22 @@ class RAGService:
                 text_qa_template=qa_template,
                 response_mode=response_mode,  # OPTIONSL: refine, compact, tree_sumarize, simple_summarize, accumulate,compact_accumulate, generation, no_text, context_only.
             )
+            
+
+            preprocessor  =  []
+            if self.retriever_config["use_reranker"]:
+                reranker = SentenceTransformerRerank(
+                    top_n=top_k,
+                    model="BAAI/bge-reranker-large",
+                )
+                preprocessor.append(reranker)
+                
 
             # Configure Query Engine
             query_engine = RetrieverQueryEngine(
                 retriever=hybrid_retriever,
                 response_synthesizer=response_synthesizer,
+                node_postprocessors=preprocessor,
             )
 
             # PERFORMANCE TRACKING: Execute Query with timing

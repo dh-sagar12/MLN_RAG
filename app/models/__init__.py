@@ -3,7 +3,7 @@
 from app.models.knowledge_base import KnowledgeBase
 from app.models.uploaded_file import UploadedFile
 from app.models.embedding import Embedding
-from app.models.chat_session import ChatSession, ChatMessage
+from app.models.chat_session import ChatSession, ChatMessage, DraftResponse
 from app.models.web_crawl_source import WebCrawlSource
 from app.models.configuration import Configuration
 
@@ -13,6 +13,7 @@ __all__ = [
     "Embedding",
     "ChatSession",
     "ChatMessage",
+    "DraftResponse",
     "WebCrawlSource",
     "Configuration",
 ]

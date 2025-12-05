@@ -19,14 +19,73 @@
     
     <!-- Main Chat Area -->
     <div class="flex-1 flex flex-col bg-white rounded-lg shadow">
-        <div class="p-4 border-b">
+        <div class="p-4 border-b flex justify-between items-center">
             <h1 class="text-2xl font-bold text-gray-900" id="chat-title">New Chat</h1>
+            <!-- Co-pilot Mode Toggle -->
+            <div class="flex items-center gap-3">
+                <span class="text-sm text-gray-600">Co-pilot Mode</span>
+                <label class="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" id="copilot-toggle" class="sr-only peer" checked>
+                    <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-amber-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-amber-500"></div>
+                </label>
+                <span id="copilot-status" class="text-xs px-2 py-1 rounded-full bg-amber-100 text-amber-700">
+                    Draft Mode Active
+                </span>
+            </div>
         </div>
         
         <!-- Chat Messages -->
         <div id="chat-messages" class="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50">
             <div class="text-center text-gray-500 py-8">
                 Start a conversation by asking a question below.
+            </div>
+        </div>
+        
+        <!-- Draft Panel (Hidden by default) -->
+        <div id="draft-panel" class="hidden border-t-2 border-amber-400 bg-amber-50">
+            <div class="p-4">
+                <div class="flex justify-between items-start mb-3">
+                    <div class="flex items-center gap-2">
+                        <span class="text-amber-600 text-lg">📝</span>
+                        <h3 class="font-semibold text-amber-800">Draft Response</h3>
+                        <span class="text-xs bg-amber-200 text-amber-800 px-2 py-1 rounded-full">Co-pilot</span>
+                    </div>
+                    <div class="flex gap-2">
+                        <button id="approve-draft-btn" class="px-3 py-1.5 bg-emerald-600 text-white rounded-md hover:bg-emerald-700 text-sm font-medium transition-colors flex items-center gap-1">
+                            <span>✓</span> Approve
+                        </button>
+                        <button id="discard-draft-btn" class="px-3 py-1.5 bg-red-500 text-white rounded-md hover:bg-red-600 text-sm font-medium transition-colors flex items-center gap-1">
+                            <span>✕</span> Discard
+                        </button>
+                    </div>
+                </div>
+                
+                <!-- Original Query Display -->
+                <div class="mb-3 p-2 bg-white rounded border border-amber-200">
+                    <span class="text-xs text-gray-500 font-medium">Original Question:</span>
+                    <p id="draft-original-query" class="text-sm text-gray-800 mt-1"></p>
+                </div>
+                
+                <!-- Draft Content with Scrollable Area -->
+                <div class="mb-3 max-h-48 overflow-y-auto">
+                    <div id="draft-content" class="p-3 bg-white rounded border border-amber-200 markdown-content text-gray-800"></div>
+                </div>
+                
+                <!-- Refinement History -->
+                <div id="refinement-history" class="mb-3 space-y-2 max-h-32 overflow-y-auto hidden">
+                    <!-- Refinement messages will appear here -->
+                </div>
+                
+                <!-- Refinement Input -->
+                <div class="flex gap-2">
+                    <input type="text" id="refinement-input" 
+                           placeholder="Request changes... (e.g., 'Add more details about pricing' or 'Make it shorter')"
+                           class="flex-1 rounded-md border-amber-300 shadow-sm focus:border-amber-500 focus:ring-amber-500 sm:text-sm px-3 py-2 border">
+                    <button id="refine-btn" class="px-4 py-2 bg-amber-600 text-white rounded-md hover:bg-amber-700 focus:outline-none focus:ring-2 focus:ring-amber-500 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium transition-colors">
+                        Refine
+                    </button>
+                </div>
+                <p class="text-xs text-amber-700 mt-2">💡 Tip: Request specific changes like "add more examples" or "use simpler language"</p>
             </div>
         </div>
         
@@ -151,11 +210,57 @@
     .bg-blue-600 .markdown-content code {
         background-color: rgba(255, 255, 255, 0.2);
     }
+    
+    /* Draft Panel Animations */
+    #draft-panel {
+        transition: all 0.3s ease-in-out;
+    }
+    
+    #draft-panel.showing {
+        animation: slideUp 0.3s ease-out;
+    }
+    
+    @keyframes slideUp {
+        from {
+            opacity: 0;
+            transform: translateY(20px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+    
+    /* Refinement history styling */
+    .refinement-message {
+        padding: 0.5rem 0.75rem;
+        border-radius: 0.5rem;
+        font-size: 0.875rem;
+    }
+    
+    .refinement-user {
+        background-color: #fef3c7;
+        border: 1px solid #fcd34d;
+        margin-left: 1rem;
+    }
+    
+    .refinement-assistant {
+        background-color: white;
+        border: 1px solid #e5e7eb;
+        margin-right: 1rem;
+    }
+    
+    /* Co-pilot toggle animation */
+    #copilot-toggle:checked + div {
+        background-color: #f59e0b;
+    }
 </style>
 
 <script>
 let currentSessionId = null;
 let chatHistory = [];
+let copilotMode = true;  // Co-pilot mode enabled by default
+let currentDraftId = null;
 
 // DOM elements
 const chatMessages = document.getElementById('chat-messages');
@@ -169,6 +274,18 @@ const chatTitle = document.getElementById('chat-title');
 const resultsSection = document.getElementById('results-section');
 const sourcesDiv = document.getElementById('sources');
 const closeSourcesBtn = document.getElementById('close-sources');
+
+// Co-pilot elements
+const copilotToggle = document.getElementById('copilot-toggle');
+const copilotStatus = document.getElementById('copilot-status');
+const draftPanel = document.getElementById('draft-panel');
+const draftContent = document.getElementById('draft-content');
+const draftOriginalQuery = document.getElementById('draft-original-query');
+const refinementHistory = document.getElementById('refinement-history');
+const refinementInput = document.getElementById('refinement-input');
+const refineBtn = document.getElementById('refine-btn');
+const approveDraftBtn = document.getElementById('approve-draft-btn');
+const discardDraftBtn = document.getElementById('discard-draft-btn');
 
 // Load chat sessions on page load
 loadChatSessions();
@@ -187,6 +304,19 @@ closeSourcesBtn.addEventListener('click', () => {
     resultsSection.classList.add('hidden');
 });
 
+// Co-pilot event listeners
+copilotToggle.addEventListener('change', handleCopilotToggle);
+refineBtn.addEventListener('click', handleRefineDraft);
+approveDraftBtn.addEventListener('click', handleApproveDraft);
+discardDraftBtn.addEventListener('click', handleDiscardDraft);
+
+refinementInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        handleRefineDraft();
+    }
+});
+
 // Add Ctrl+Enter support for submitting query
 queryTextarea.addEventListener('keydown', (e) => {
     if (e.ctrlKey && e.key === 'Enter') {
@@ -194,6 +324,204 @@ queryTextarea.addEventListener('keydown', (e) => {
         queryForm.dispatchEvent(new Event('submit'));
     }
 });
+
+async function handleCopilotToggle() {
+    copilotMode = copilotToggle.checked;
+    
+    if (copilotMode) {
+        copilotStatus.classList.remove('hidden');
+        copilotStatus.textContent = 'Draft Mode Active';
+        copilotStatus.classList.remove('bg-gray-100', 'text-gray-600');
+        copilotStatus.classList.add('bg-amber-100', 'text-amber-700');
+    } else {
+        copilotStatus.classList.add('hidden');
+        // Hide draft panel if switching off copilot mode
+        hideDraftPanel();
+    }
+    
+    // Save preference to session if exists
+    if (currentSessionId) {
+        try {
+            await fetch(`/api/chat/sessions/${currentSessionId}/copilot`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ enabled: copilotMode })
+            });
+        } catch (error) {
+            console.error('Error saving copilot preference:', error);
+        }
+    }
+}
+
+function showDraftPanel(originalQuery, draftText, sources = null) {
+    draftOriginalQuery.textContent = originalQuery;
+    const parsedContent = DOMPurify.sanitize(marked.parse(draftText));
+    draftContent.innerHTML = parsedContent;
+    
+    draftPanel.classList.remove('hidden');
+    draftPanel.classList.add('showing');
+    
+    // Clear refinement history display
+    refinementHistory.innerHTML = '';
+    refinementHistory.classList.add('hidden');
+    
+    // Show sources if available
+    if (sources && (sources.kbs_used?.length > 0 || sources.chunks?.length > 0)) {
+        showSources(sources);
+    }
+}
+
+function hideDraftPanel() {
+    draftPanel.classList.add('hidden');
+    draftPanel.classList.remove('showing');
+    currentDraftId = null;
+    refinementInput.value = '';
+    refinementHistory.innerHTML = '';
+    refinementHistory.classList.add('hidden');
+}
+
+function updateDraftContent(newContent) {
+    const parsedContent = DOMPurify.sanitize(marked.parse(newContent));
+    draftContent.innerHTML = parsedContent;
+}
+
+function addRefinementMessage(role, content) {
+    refinementHistory.classList.remove('hidden');
+    
+    const msgDiv = document.createElement('div');
+    msgDiv.className = `refinement-message ${role === 'user' ? 'refinement-user' : 'refinement-assistant'}`;
+    
+    if (role === 'user') {
+        msgDiv.innerHTML = `<span class="text-amber-800 font-medium">You:</span> ${content}`;
+    } else {
+        msgDiv.innerHTML = `<span class="text-gray-600 font-medium">Updated draft</span>`;
+    }
+    
+    refinementHistory.appendChild(msgDiv);
+    refinementHistory.scrollTop = refinementHistory.scrollHeight;
+}
+
+async function handleRefineDraft() {
+    const refinementRequest = refinementInput.value.trim();
+    if (!refinementRequest || !currentDraftId) return;
+    
+    refineBtn.disabled = true;
+    refineBtn.textContent = 'Refining...';
+    refinementInput.disabled = true;
+    
+    // Add user's refinement request to history
+    addRefinementMessage('user', refinementRequest);
+    refinementInput.value = '';
+    
+    try {
+        const response = await fetch(`/api/draft/${currentDraftId}/refine`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                refinement: refinementRequest,
+                session_id: currentSessionId,
+                top_k: parseInt(document.getElementById('top_k').value) || 7,
+                history_k: parseInt(document.getElementById('history_k').value) || 20,
+                channel: (channelSelect?.value || 'email').toLowerCase()
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            updateDraftContent(data.current_draft);
+            addRefinementMessage('assistant', 'Draft updated');
+            
+            // Update sources if available
+            if (data.kbs_used?.length > 0 || data.chunks?.length > 0) {
+                showSources(data);
+            }
+        } else {
+            alert('Failed to refine draft: ' + (data.error || 'Unknown error'));
+        }
+    } catch (error) {
+        console.error('Error refining draft:', error);
+        alert('Error refining draft');
+    } finally {
+        refineBtn.disabled = false;
+        refineBtn.textContent = 'Refine';
+        refinementInput.disabled = false;
+        refinementInput.focus();
+    }
+}
+
+async function handleApproveDraft() {
+    if (!currentDraftId) return;
+    
+    approveDraftBtn.disabled = true;
+    approveDraftBtn.textContent = 'Approving...';
+    
+    try {
+        const response = await fetch(`/api/draft/${currentDraftId}/approve`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            // Add messages to chat display
+            const originalQuery = draftOriginalQuery.textContent;
+            const approvedContent = draftContent.textContent;
+            
+            addMessage('user', originalQuery);
+            chatHistory.push({ role: 'user', content: originalQuery });
+            
+            // Get the actual draft content (from the innerHTML, parsed)
+            const draftTextContent = draftContent.querySelector('.markdown-content')?.innerHTML || draftContent.innerHTML;
+            addMessageWithHTML('assistant', draftTextContent);
+            chatHistory.push({ role: 'assistant', content: approvedContent });
+            
+            hideDraftPanel();
+            
+            // Reload sessions to update title
+            await loadChatSessions();
+        } else {
+            alert('Failed to approve draft: ' + (data.error || 'Unknown error'));
+        }
+    } catch (error) {
+        console.error('Error approving draft:', error);
+        alert('Error approving draft');
+    } finally {
+        approveDraftBtn.disabled = false;
+        approveDraftBtn.innerHTML = '<span>✓</span> Approve';
+    }
+}
+
+async function handleDiscardDraft() {
+    if (!currentDraftId) return;
+    
+    if (!confirm('Are you sure you want to discard this draft?')) return;
+    
+    discardDraftBtn.disabled = true;
+    discardDraftBtn.textContent = 'Discarding...';
+    
+    try {
+        const response = await fetch(`/api/draft/${currentDraftId}/discard`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            hideDraftPanel();
+        } else {
+            alert('Failed to discard draft: ' + (data.error || 'Unknown error'));
+        }
+    } catch (error) {
+        console.error('Error discarding draft:', error);
+        alert('Error discarding draft');
+    } finally {
+        discardDraftBtn.disabled = false;
+        discardDraftBtn.innerHTML = '<span>✕</span> Discard';
+    }
+}
 
 async function loadChatSessions() {
     try {
@@ -258,6 +586,14 @@ async function createNewChat() {
         chatTitle.textContent = 'New Chat';
         chatMessages.innerHTML = '<div class="text-center text-gray-500 py-8">Start a conversation by asking a question below.</div>';
         resultsSection.classList.add('hidden');
+        hideDraftPanel();
+        
+        // Keep copilot mode enabled by default for new session
+        copilotToggle.checked = true;
+        copilotMode = true;
+        copilotStatus.classList.remove('hidden');
+        copilotStatus.classList.remove('bg-gray-100', 'text-gray-600');
+        copilotStatus.classList.add('bg-amber-100', 'text-amber-700');
         
         // Update URL
         window.history.pushState({}, '', `/chat?session_id=${currentSessionId}`);
@@ -286,6 +622,7 @@ async function loadChatSession(sessionId) {
         // Load messages
         chatMessages.innerHTML = '';
         chatHistory = [];
+        hideDraftPanel();
         
         if (data.messages && data.messages.length > 0) {
             data.messages.forEach(msg => {
@@ -296,6 +633,9 @@ async function loadChatSession(sessionId) {
             chatMessages.innerHTML = '<div class="text-center text-gray-500 py-8">Start a conversation by asking a question below.</div>';
         }
         
+        // Check for active draft
+        await checkActiveDraft(sessionId);
+        
         // Update URL
         window.history.pushState({}, '', `/chat?session_id=${sessionId}`);
         
@@ -304,6 +644,33 @@ async function loadChatSession(sessionId) {
     } catch (error) {
         console.error('Error loading chat session:', error);
         alert('Failed to load chat session');
+    }
+}
+
+async function checkActiveDraft(sessionId) {
+    try {
+        const response = await fetch(`/api/chat/sessions/${sessionId}/draft`);
+        const data = await response.json();
+        
+        if (data.draft_id) {
+            currentDraftId = data.draft_id;
+            copilotMode = true;
+            copilotToggle.checked = true;
+            copilotStatus.classList.remove('hidden');
+            copilotStatus.classList.remove('bg-gray-100', 'text-gray-600');
+            copilotStatus.classList.add('bg-amber-100', 'text-amber-700');
+            
+            showDraftPanel(data.original_query, data.current_draft, data.sources_data);
+            
+            // Load refinement history
+            if (data.refinement_history && data.refinement_history.length > 0) {
+                data.refinement_history.forEach(msg => {
+                    addRefinementMessage(msg.role, msg.content);
+                });
+            }
+        }
+    } catch (error) {
+        console.error('Error checking active draft:', error);
     }
 }
 
@@ -320,6 +687,7 @@ async function deleteChatSession(sessionId) {
                 chatTitle.textContent = 'New Chat';
                 chatMessages.innerHTML = '<div class="text-center text-gray-500 py-8">Start a conversation by asking a question below.</div>';
                 window.history.pushState({}, '', '/chat');
+                hideDraftPanel();
             }
             await loadChatSessions();
         }
@@ -353,11 +721,14 @@ async function handleQuery(e) {
     submitBtn.textContent = 'Sending...';
     queryInput.disabled = true;
     
-    // Add user message
-    addMessage('user', query);
-    chatHistory.push({ role: 'user', content: query });
+    // In copilot mode, don't add user message to chat yet
+    if (!copilotMode) {
+        // Add user message
+        addMessage('user', query);
+        chatHistory.push({ role: 'user', content: query });
+    }
     
-    // Show "AI is thinking" indicator
+    // Show "AI is thinking" indicator (always show, regardless of mode)
     const thinkingMessageId = addThinkingMessage();
     
     // Clear previous results
@@ -376,6 +747,7 @@ async function handleQuery(e) {
                 session_id: currentSessionId,
                 history_k: historyK,
                 channel,
+                copilot_mode: copilotMode
             })
         });
         
@@ -385,24 +757,42 @@ async function handleQuery(e) {
         removeThinkingMessage(thinkingMessageId);
         
         if (data.error) {
-            addMessage('assistant', `Error: ${data.error}`, 'text-red-600');
-        } else {
-            // Add assistant message
-            addMessage('assistant', data.answer);
-            chatHistory.push({ role: 'assistant', content: data.answer });
-            
-            // Show sources
-            if (data.kbs_used && data.kbs_used.length > 0) {
-                showSources(data);
+            if (!copilotMode) {
+                addMessage('assistant', `Error: ${data.error}`, 'text-red-600');
+            } else {
+                alert('Error: ' + data.error);
             }
-            
-            // Reload sessions to update title if needed
-            await loadChatSessions();
+        } else {
+            if (copilotMode && data.is_draft) {
+                // Show draft panel
+                currentDraftId = data.draft_id;
+                showDraftPanel(query, data.answer, {
+                    sources: data.sources,
+                    kbs_used: data.kbs_used,
+                    chunks: data.chunks
+                });
+            } else {
+                // Normal mode - add assistant message
+                addMessage('assistant', data.answer);
+                chatHistory.push({ role: 'assistant', content: data.answer });
+                
+                // Show sources
+                if (data.kbs_used && data.kbs_used.length > 0) {
+                    showSources(data);
+                }
+                
+                // Reload sessions to update title if needed
+                await loadChatSessions();
+            }
         }
     } catch (error) {
         // Remove thinking indicator
         removeThinkingMessage(thinkingMessageId);
-        addMessage('assistant', `Error: ${error.message}`, 'text-red-600');
+        if (!copilotMode) {
+            addMessage('assistant', `Error: ${error.message}`, 'text-red-600');
+        } else {
+            alert('Error: ' + error.message);
+        }
     } finally {
         // Re-enable form
         submitBtn.disabled = false;
@@ -439,6 +829,31 @@ function addMessage(role, content, scroll = true) {
     }
 }
 
+function addMessageWithHTML(role, htmlContent, scroll = true) {
+    // Remove placeholder if exists
+    const placeholder = chatMessages.querySelector('.text-center');
+    if (placeholder) placeholder.remove();
+    
+    const messageDiv = document.createElement('div');
+    messageDiv.className = `flex ${role === 'user' ? 'justify-end' : 'justify-start'}`;
+    
+    const bubble = document.createElement('div');
+    bubble.className = `max-w-[80%] rounded-lg px-4 py-2 ${
+        role === 'user' 
+            ? 'bg-blue-600 text-white' 
+            : 'bg-white border text-gray-800'
+    }`;
+    
+    bubble.innerHTML = `<div class="markdown-content">${htmlContent}</div>`;
+    
+    messageDiv.appendChild(bubble);
+    chatMessages.appendChild(messageDiv);
+    
+    if (scroll) {
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+}
+
 function addThinkingMessage() {
     // Remove placeholder if exists
     const placeholder = chatMessages.querySelector('.text-center');
@@ -453,7 +868,7 @@ function addThinkingMessage() {
     
     // Create thinking indicator with animated dots
     const thinkingText = document.createElement('span');
-    thinkingText.textContent = 'AI is thinking';
+    thinkingText.textContent = copilotMode ? 'AI is preparing draft' : 'AI is thinking';
     thinkingText.className = 'inline-block';
     
     const dots = document.createElement('span');

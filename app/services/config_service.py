@@ -91,6 +91,12 @@ class ConfigService:
             "description": "Enable intent-based filtering of retrieved chunks. When enabled, only chunks with the specified intents will be retrieved.",
             "category": "retriever",
         },
+        "retriever.use_reranker": {
+            "value": True,
+            "type": "bool",
+            "description": "Enable Re-ranker to filter out best performing chunk retrived from similarity search",
+            "category": "retriever",
+        },
         "retriever.bm25.top_k": {
             "value": 50,
             "type": "int",
@@ -413,14 +419,21 @@ class ConfigService:
         return {
             "vector": {
                 "top_k": ConfigService.get_config(db, "retriever.vector.top_k"),
-                "ef_search": ConfigService.get_config(db, "retriever.vector.ef_search"),
-                "use_intent_filter": ConfigService.get_config(db, "retriever.vector.use_intent_filter"),
+                "ef_search": ConfigService.get_config(
+                    db,
+                    "retriever.vector.ef_search",
+                ),
+                "use_intent_filter": ConfigService.get_config(
+                    db,
+                    "retriever.vector.use_intent_filter",
+                ),
             },
             "bm25": {
                 "enabled": ConfigService.get_config(db, "retriever.bm25.enabled"),
                 "top_k": ConfigService.get_config(db, "retriever.bm25.top_k"),
                 "language": ConfigService.get_config(db, "retriever.bm25.language"),
             },
+            "use_reranker": ConfigService.get_config(db, "retriever.use_reranker"),
         }
 
     @staticmethod

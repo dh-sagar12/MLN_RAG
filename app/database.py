@@ -126,6 +126,65 @@ def _create_tsv_index(db: Engine):
         )
 
 
+def _run_migrations() -> None:
+    """Run database migrations for schema updates."""
+    logger.info("Running database migrations...")
+    
+    with engine.begin() as conn:
+        # Migration 1: Add copilot_enabled column to chat_sessions if not exists
+        result = conn.execute(
+            text("""
+                SELECT EXISTS (
+                    SELECT 1 FROM information_schema.columns 
+                    WHERE table_name = 'chat_sessions' AND column_name = 'copilot_enabled'
+                )
+            """)
+        )
+        if not result.scalar():
+            logger.info("Adding copilot_enabled column to chat_sessions...")
+            conn.execute(
+                text("ALTER TABLE chat_sessions ADD COLUMN copilot_enabled BOOLEAN DEFAULT TRUE NOT NULL")
+            )
+            logger.info("copilot_enabled column added successfully")
+        
+        # Migration 2: Create draft_responses table if not exists
+        result = conn.execute(
+            text("""
+                SELECT EXISTS (
+                    SELECT 1 FROM information_schema.tables 
+                    WHERE table_name = 'draft_responses'
+                )
+            """)
+        )
+        if not result.scalar():
+            logger.info("Creating draft_responses table...")
+            conn.execute(
+                text("""
+                    CREATE TABLE draft_responses (
+                        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                        session_id UUID NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+                        original_query TEXT NOT NULL,
+                        current_draft TEXT NOT NULL,
+                        status VARCHAR(20) DEFAULT 'active' NOT NULL,
+                        refinement_history JSONB DEFAULT '[]'::jsonb NOT NULL,
+                        sources_data JSONB DEFAULT '{}'::jsonb,
+                        created_at TIMESTAMP DEFAULT NOW() NOT NULL,
+                        updated_at TIMESTAMP DEFAULT NOW() NOT NULL
+                    )
+                """)
+            )
+            # Create index for faster lookups
+            conn.execute(
+                text("""
+                    CREATE INDEX idx_draft_responses_session_status 
+                    ON draft_responses(session_id, status)
+                """)
+            )
+            logger.info("draft_responses table created successfully")
+    
+    logger.info("Database migrations completed")
+
+
 def init_db() -> None:
     """Initialize database tables and pgvector extension."""
     from app.models import (
@@ -150,9 +209,12 @@ def init_db() -> None:
     Base.metadata.create_all(bind=engine)
     logger.info("Database tables created/verified")
 
+    # Run migrations for existing databases
+    _run_migrations()
+
     # _create_hnsw_index(db=engine)
 
-    # _create_tsv_index(db=engine)
+    _create_tsv_index(db=engine)
 
     # Initialize default configuration values
     logger.info("Initializing default configuration...")
