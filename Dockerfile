@@ -4,7 +4,9 @@ FROM python:3.11-slim
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies (includes Chromium dependencies)
+# ----------------------------------------------------------------------
+# System dependencies
+# ----------------------------------------------------------------------
 RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
@@ -35,46 +37,83 @@ RUN apt-get update && apt-get install -y \
     libxrender1 \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements and install Python dependencies
+# ----------------------------------------------------------------------
+# Copy requirements
+# ----------------------------------------------------------------------
 COPY requirements.txt .
+
+# ----------------------------------------------------------------------
+# Install Python deps
+# GPU packages COMMENTED OUT
+# ----------------------------------------------------------------------
+
+# ---- GPU SECTION (for future use) ------------------------------------
+# Uncomment this block in future when GPU is needed
+# RUN pip install --no-cache-dir \
+#     torch==2.9.1 \
+#     triton==3.5.1 \
+#     nvidia-cublas-cu12 \
+#     nvidia-cuda-cupti-cu12 \
+#     nvidia-cuda-nvrtc-cu12 \
+#     nvidia-cuda-runtime-cu12 \
+#     nvidia-cudnn-cu12 \
+#     nvidia-cufft-cu12 \
+#     nvidia-cufile-cu12 \
+#     nvidia-curand-cu12 \
+#     nvidia-cusolver-cu12 \
+#     nvidia-cusparse-cu12 \
+#     nvidia-cusparselt-cu12 \
+#     nvidia-nccl-cu12 \
+#     nvidia-nvjitlink-cu12 \
+#     nvidia-nvshmem-cu12 \
+#     nvidia-nvtx-cu12
+# ----------------------------------------------------------------------
+
+# Install CPU-only PyTorch instead of GPU build
+RUN pip install --no-cache-dir \
+    torch==2.9.1+cpu \
+    --index-url https://download.pytorch.org/whl/cpu
+
+# Install remaining deps
 RUN pip install --no-cache-dir -r requirements.txt
 
+# ----------------------------------------------------------------------
 # Create non-root user
+# ----------------------------------------------------------------------
 RUN useradd --create-home --shell /bin/bash app && \
     mkdir -p /home/app/.cache && \
     chown -R app:app /home/app /app
 
-# Switch to app user for Playwright installation
+# ----------------------------------------------------------------------
+# Playwright install (under non-root)
+# ----------------------------------------------------------------------
 USER app
 ENV HOME=/home/app
-
-# Install Playwright browsers as 'app' user (without --with-deps since system deps already installed)
 RUN python -m playwright install chromium
 
-# Switch back to root for copying files and setting up entrypoint
+# ----------------------------------------------------------------------
+# Switch back to root & copy app files
+# ----------------------------------------------------------------------
 USER root
 
-# Copy application code
 COPY --chown=app:app app/ ./app/
 COPY --chown=app:app *.py ./
 COPY --chown=app:app app/templates/ ./app/templates/
 COPY --chown=app:app app/static/ ./app/static/
 
-# Create required directories
 RUN mkdir -p /app/logs/performance /app/storage/uploads && \
     chown -R app:app /app
 
-# Copy entrypoint script
+# ----------------------------------------------------------------------
+# Entrypoint & healthcheck
+# ----------------------------------------------------------------------
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-# Expose port
 EXPOSE 8000
 
-# Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8000/ || exit 1
 
-# Use entrypoint to fix permissions on mounted volumes, then run as app user
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
