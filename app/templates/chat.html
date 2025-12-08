@@ -48,7 +48,7 @@
                     <div class="flex items-center gap-2">
                         <span class="text-amber-600 text-lg">📝</span>
                         <h3 class="font-semibold text-amber-800">Draft Response</h3>
-                        <span class="text-xs bg-amber-200 text-amber-800 px-2 py-1 rounded-full">Co-pilot</span>
+                        <span class="text-xs bg-amber-200 text-amber-800 px-2 py-1 rounded-full">Manager Review</span>
                     </div>
                     <div class="flex gap-2">
                         <button id="approve-draft-btn" class="px-3 py-1.5 bg-emerald-600 text-white rounded-md hover:bg-emerald-700 text-sm font-medium transition-colors flex items-center gap-1">
@@ -60,32 +60,34 @@
                     </div>
                 </div>
                 
-                <!-- Original Query Display -->
+                <!-- Original Customer Query Display -->
                 <div class="mb-3 p-2 bg-white rounded border border-amber-200">
-                    <span class="text-xs text-gray-500 font-medium">Original Question:</span>
+                    <span class="text-xs text-gray-500 font-medium">👤 Customer's Question:</span>
                     <p id="draft-original-query" class="text-sm text-gray-800 mt-1"></p>
                 </div>
                 
-                <!-- Draft Content with Scrollable Area -->
+                <!-- AI Draft Response to Customer (Scrollable Area) -->
                 <div class="mb-3 max-h-48 overflow-y-auto">
+                    <p class="text-xs text-gray-500 font-medium mb-1">🤖 AI's Draft Response (will be sent to customer):</p>
                     <div id="draft-content" class="p-3 bg-white rounded border border-amber-200 markdown-content text-gray-800"></div>
                 </div>
                 
-                <!-- Refinement History -->
+                <!-- Refinement History (Manager Instructions & AI Updates) -->
                 <div id="refinement-history" class="mb-3 space-y-2 max-h-32 overflow-y-auto hidden">
+                    <p class="text-xs text-amber-600 font-medium mb-1">📝 Refinement History:</p>
                     <!-- Refinement messages will appear here -->
                 </div>
                 
-                <!-- Refinement Input -->
+                <!-- Refinement Input (Manager Instructions) -->
                 <div class="flex gap-2">
                     <input type="text" id="refinement-input" 
-                           placeholder="Request changes... (e.g., 'Add more details about pricing' or 'Make it shorter')"
+                           placeholder="Manager instruction... (e.g., 'Add pricing details' or 'Include permit info')"
                            class="flex-1 rounded-md border-amber-300 shadow-sm focus:border-amber-500 focus:ring-amber-500 sm:text-sm px-3 py-2 border">
                     <button id="refine-btn" class="px-4 py-2 bg-amber-600 text-white rounded-md hover:bg-amber-700 focus:outline-none focus:ring-2 focus:ring-amber-500 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium transition-colors">
                         Refine
                     </button>
                 </div>
-                <p class="text-xs text-amber-700 mt-2">💡 Tip: Request specific changes like "add more examples" or "use simpler language"</p>
+                <p class="text-xs text-amber-700 mt-2">📋 <strong>Manager Mode:</strong> Your instructions will improve the AI's response before it's sent to the customer</p>
             </div>
         </div>
         
@@ -238,6 +240,13 @@
         font-size: 0.875rem;
     }
     
+    .refinement-manager {
+        background-color: #fef3c7;
+        border: 1px solid #fcd34d;
+        margin-left: 1rem;
+    }
+    
+    /* Legacy support for existing data */
     .refinement-user {
         background-color: #fef3c7;
         border: 1px solid #fcd34d;
@@ -389,12 +398,14 @@ function addRefinementMessage(role, content) {
     refinementHistory.classList.remove('hidden');
     
     const msgDiv = document.createElement('div');
-    msgDiv.className = `refinement-message ${role === 'user' ? 'refinement-user' : 'refinement-assistant'}`;
+    // Support both 'user' (legacy) and 'manager' roles for refinement requests
+    const isManagerMessage = role === 'user' || role === 'manager';
+    msgDiv.className = `refinement-message ${isManagerMessage ? 'refinement-manager' : 'refinement-assistant'}`;
     
-    if (role === 'user') {
-        msgDiv.innerHTML = `<span class="text-amber-800 font-medium">You:</span> ${content}`;
+    if (isManagerMessage) {
+        msgDiv.innerHTML = `<span class="text-amber-800 font-medium">📋 Manager:</span> ${content}`;
     } else {
-        msgDiv.innerHTML = `<span class="text-gray-600 font-medium">Updated draft</span>`;
+        msgDiv.innerHTML = `<span class="text-gray-600 font-medium">✅ Draft Updated</span>`;
     }
     
     refinementHistory.appendChild(msgDiv);
@@ -409,8 +420,8 @@ async function handleRefineDraft() {
     refineBtn.textContent = 'Refining...';
     refinementInput.disabled = true;
     
-    // Add user's refinement request to history
-    addRefinementMessage('user', refinementRequest);
+    // Add manager's refinement instruction to history
+    addRefinementMessage('manager', refinementRequest);
     refinementInput.value = '';
     
     try {
