@@ -509,6 +509,22 @@ class ConfigService:
             "description": "Prompt for intent detection. Used to identify user intents or query intents from text.",
             "category": "prompt",
         },
+        "prompt.refine_draft": {
+            "value": """
+                The developer has requested you to refine the draft response based on the refinement request query provided. The previos refinement history is provided also provided. 
+                
+                --- YOUR TASK ---
+                Update your draft response according to the refinement request.
+                - The updated response will still be sent to the end customer
+                - Keep the response appropriate for the customer (they won't see the refinement request)
+                - Maintain the same professional tone and format
+                - Incorporate any missing details or changes the refinement request
+                - Do NOT address the refinement request directly in your response - write as if responding to the customer
+            """,
+            "type": "string",
+            "description": "Prompt for draft refinement. Used to refine the draft response based on the refinement request.",
+            "category": "prompt",
+        }
     }
 
     @staticmethod
@@ -658,6 +674,7 @@ class ConfigService:
                 db, "prompt.query_enhancement"
             ),
             "intent_detection": ConfigService.get_config(db, "prompt.intent_detection"),
+            "refine_draft": ConfigService.get_config(db, "prompt.refine_draft"),
         }
 
     @staticmethod

@@ -44,7 +44,7 @@ class PostgresRetriever(BaseRetriever):
 
     def _retrieve(self, query_bundle: QueryBundle) -> List[NodeWithScore]:
         """Retrieve nodes given a query."""
-        query_text = query_bundle.query_str
+        query_text = query_bundle.custom_embedding_strs[0] #for now we are using only one string for embedding.
         retrieval_start = time.perf_counter()
 
         # Embed query with timing
@@ -104,7 +104,7 @@ class PostgresRetriever(BaseRetriever):
             dialect=self.db.bind.dialect,
             compile_kwargs={"literal_binds": True},
         )
-        print(f"Actual SQL:\n{str(compiled)}")
+        # print(f"Actual SQL:\n{str(compiled)}")
 
         logger.info(
             f"Vector search retrieved {len(rows)} nodes with similarity threshold {self.similarity_threshold}"

@@ -3,7 +3,7 @@
 import json
 import logging
 import time
-from typing import List, Dict, Any, Optional, AsyncIterator, Set
+from typing import List, Dict, Any, Optional, AsyncIterator, Set, Tuple
 from llama_index.core.retrievers import QueryFusionRetriever
 from llama_index.core.vector_stores.types import MetadataFilters
 from sqlalchemy.orm import Session
@@ -13,11 +13,13 @@ from llama_index.llms.openai import OpenAI
 from llama_index.core import (
     ChatPromptTemplate,
     PromptTemplate,
+    QueryBundle,
     get_response_synthesizer,
 )
 from llama_index.core.query_engine import RetrieverQueryEngine
 from llama_index.core.llms import ChatMessage as LlamaChatMessage
 from app.config import settings
+from app.models import DraftResponse
 from app.services.extractor import IntentMetadataFilter
 from app.services.performance_tracker import get_performance_tracker, PerformanceTracker
 from app.services.config_service import ConfigService
@@ -38,6 +40,12 @@ class RAGService:
         self.embed_model = None
         self.llm = None
         self.filters = None
+        self.draft_mode_prompt_template = (
+            None  # pass this in the context on final query if draft_mode is True
+        )
+        self.enhancement_draft_history = (
+            None  # pass this in the context on enhancement query if draft_mode is True
+        )
 
         # Load configuration first (needed for LLM initialization)
         self._load_config()
@@ -108,7 +116,12 @@ class RAGService:
         self.hybrid_config = ConfigService.get_hybrid_config(self.db)
         self.prompt_config = ConfigService.get_prompt_config(self.db)
 
-    def _get_enhanced_query_and_intents(self, query_text, chat_history):
+    def _get_enhanced_query_and_intents(
+        self,
+        query_text: str,
+        chat_history: List[Dict[str, str]],
+        draft_mode: bool,
+    ) -> Tuple[str, List[str]]:
         """Generate enhanced query using chat history."""
         if not self.llm:
             return query_text, []
@@ -116,36 +129,33 @@ class RAGService:
         # Use dynamic query enhancement prompt from config
         SYSTEM_PROMPT = self.prompt_config.get("query_enhancement")
 
+        messages = [
+            LlamaChatMessage(
+                role="system",
+                content=SYSTEM_PROMPT,
+            ),
+        ]
+
         # Build combined history text for context resolution
-        history_text = ""
         if chat_history:
             for msg in chat_history:
-                history_text += f"{msg['role']}: {msg['content']}\n"
+                messages.append(
+                    LlamaChatMessage(
+                        role=msg["role"],
+                        content=msg["content"],
+                    )
+                )
 
-        combined_input = f"""
-            Conversation history:
-            {history_text}
+        if draft_mode and self.draft_mode_prompt_template:
+            messages.extend(self.enhancement_draft_history)
 
-            Latest user question:
-            {query_text}
-        """
-
-        messages = [
-            {
-                "role": "system",
-                "content": SYSTEM_PROMPT,
-            },
-            {
-                "role": "user",
-                "content": combined_input,
-            },
-        ]
-
-        chat_messages = [
-            LlamaChatMessage(role=m["role"], content=m["content"]) for m in messages
-        ]
-
-        response = self.llm.chat(chat_messages)
+        messages.append(
+            LlamaChatMessage(
+                role="developer" if draft_mode else "user",
+                content=query_text,
+            )
+        )
+        response = self.llm.chat(messages)
         print(response.message.content, "Response")
         try:
             decoded_response = json.loads(response.message.content)
@@ -175,45 +185,55 @@ class RAGService:
 
     def _build_qa_template(
         self,
-        channel,
-        chat_history,
-        original_query,
-        intents,
-    ):
+        channel: str,
+        chat_history: List[Dict[str, str]],
+        original_query: str,
+        intents: List[str],
+        draft_mode: bool,
+    ) -> ChatPromptTemplate:
         system_prompt = self.get_system_prompt_for_channel(channel)
         # We need to include chat history in the prompt if provided
-        history_context = ""
+        messages = [
+            LlamaChatMessage(
+                role="system",
+                content=system_prompt,
+            ),
+        ]
+
+        if draft_mode and self.draft_mode_prompt_template:
+            messages.extend(self.draft_mode_prompt_template)
+
         if chat_history:
             for msg in chat_history:
-                history_context += f"{msg['role']}: {msg['content']}\n"
+                messages.append(
+                    LlamaChatMessage(
+                        role=msg["role"],
+                        content=msg["content"],
+                    )
+                )
 
-        return ChatPromptTemplate(
-            message_templates=[
-                LlamaChatMessage(
-                    role="system",
-                    content=system_prompt,
-                ),
-                LlamaChatMessage(
-                    role="user",
-                    content=f"Conversation History:\n-------------------\n{history_context}\n-------------------",
-                ),
+        messages.extend(
+            [
                 LlamaChatMessage(
                     role="user",
                     content="Context:\n---------------------\n{context_str}\n---------------------",
                 ),
                 LlamaChatMessage(
-                    role="user",
+                    role="developer" if draft_mode else "user",
                     content=f"Original Query:\n-------------------\n{original_query}\n-------------------",
                 ),
                 LlamaChatMessage(
-                    role="user",
+                    role="developer",
                     content=f"Intents: {intents}",
                 ),
                 LlamaChatMessage(
-                    role="user",
+                    role="developer" if draft_mode else "user",
                     content="Answer the query strictly based on the above context.\n Enhanced Query: {query_str}\n",
                 ),
-            ],
+            ]
+        )
+        return ChatPromptTemplate(
+            message_templates=messages,
         )
 
     def query(
@@ -224,6 +244,7 @@ class RAGService:
         channel: str = "email",
         similarity_threshold: Optional[float] = None,
         session_id: Optional[str] = None,
+        draft_mode: Optional[bool] = False,
     ) -> Dict[str, Any]:
         """Query across all knowledge bases.
 
@@ -281,6 +302,7 @@ class RAGService:
             enhanced_query, intents = self._get_enhanced_query_and_intents(
                 query_text=query_text,
                 chat_history=chat_history,
+                draft_mode=draft_mode,
             )
 
             enhancement_time_ms = (time.perf_counter() - enhancement_start) * 1000
@@ -356,6 +378,7 @@ class RAGService:
                 chat_history=chat_history,
                 original_query=query_text,
                 intents=intents,
+                draft_mode=draft_mode,
             )
             prompt_construction_time_ms = (
                 time.perf_counter() - prompt_construction_start
@@ -373,16 +396,13 @@ class RAGService:
                 text_qa_template=qa_template,
                 response_mode=response_mode,  # OPTIONSL: refine, compact, tree_sumarize, simple_summarize, accumulate,compact_accumulate, generation, no_text, context_only.
             )
-            
-
-            preprocessor  =  []
+            preprocessor = []
             if self.retriever_config["use_reranker"]:
                 reranker = SentenceTransformerRerank(
                     top_n=top_k,
                     model="BAAI/bge-reranker-large",
                 )
                 preprocessor.append(reranker)
-                
 
             # Configure Query Engine
             query_engine = RetrieverQueryEngine(
@@ -393,7 +413,12 @@ class RAGService:
 
             # PERFORMANCE TRACKING: Execute Query with timing
             llm_generation_start = time.perf_counter()
-            response = query_engine.query(enhanced_query)
+            response = query_engine.query(
+                str_or_query_bundle=QueryBundle(
+                    query_str=query_text, #NO USE FOR NOW.
+                    custom_embedding_strs=[enhanced_query],
+                ),
+            )
             llm_generation_time_ms = (time.perf_counter() - llm_generation_start) * 1000
 
             if self.performance_tracker and request_id:
@@ -552,3 +577,60 @@ class RAGService:
         chunk_size = 50
         for i in range(0, len(answer), chunk_size):
             yield answer[i : i + chunk_size]
+
+    def refine_draft(
+        self,
+        query_text: str,
+        top_k: int,
+        channel: str,
+        similarity_threshold: float,
+        draft: DraftResponse,
+        chat_history: Optional[List[Dict[str, str]]] = None,
+    ) -> Dict[str, Any]:
+        """Refine draft response."""
+
+        messages = [
+            LlamaChatMessage(
+                role="system",
+                content=self.prompt_config.get("refine_draft"),
+            ),
+        ]
+
+        enhancement_draft_history = []
+        if draft.refinement_history:
+            for item in draft.refinement_history:
+                enhancement_draft_history.append(
+                    LlamaChatMessage(
+                        role=item["role"],
+                        content=item["content"],
+                    )
+                )
+
+        if draft.current_draft:
+            enhancement_draft_history.append(
+                LlamaChatMessage(
+                    role="assistant",
+                    content=draft.current_draft,
+                )
+            )
+
+        if draft.original_query:
+            enhancement_draft_history.append(
+                LlamaChatMessage(
+                    role="user",
+                    content=f"Original Query From user:\n-------------------\n{draft.original_query}\n-------------------",
+                )
+            )
+        
+        messages.extend(enhancement_draft_history)
+        self.enhancement_draft_history = enhancement_draft_history
+        self.draft_mode_prompt_template = messages
+
+        return self.query(
+            query_text=query_text,
+            top_k=top_k,
+            chat_history=chat_history,
+            channel=channel,
+            similarity_threshold=similarity_threshold,
+            draft_mode=True,
+        )

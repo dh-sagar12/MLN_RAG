@@ -221,12 +221,12 @@ def _refine_draft_sync(draft_id: str, refinement_request: str, new_content: str)
         draft = db.get(DraftResponse, uuid.UUID(draft_id))
         if draft and draft.status == "active":
             # Add to refinement history
-            # Note: Using "manager" role to distinguish from end-user messages
+            # Note: Using "developer" role to distinguish from end-user messages
             # This helps the AI understand that refinement requests come from 
-            # a supervisor/manager reviewing the draft, not the end customer
+            # a developer(manager) reviewing the draft, not the end customer
             history = list(draft.refinement_history) if draft.refinement_history else []
             history.append({
-                "role": "manager",
+                "role": "developer",
                 "content": refinement_request,
             })
             history.append({
@@ -312,9 +312,9 @@ def _refine_with_rag_sync(
     Important Context:
     - There are TWO types of people in this workflow:
       1. End Customer (CHR): The person who asked the original question
-      2. Manager/Supervisor: The employee reviewing the AI draft before sending to customer
-    - Refinement requests come from the MANAGER, not the end customer
-    - The AI should update its draft based on manager's instructions
+      2. Manager/Supervisor(developer): The employee reviewing the AI draft before sending to customer
+    - Refinement requests come from the DEVELOPER, not the end customer
+    - The AI should update its draft based on developer's instructions
     """
     db = next(get_db())
     try:
@@ -324,50 +324,16 @@ def _refine_with_rag_sync(
         
         rag_service = RAGService(db)
         
-        # Build refinement history context with clear role labels
-        refinement_history_text = ""
-        if draft.refinement_history:
-            refinement_history_text = "\n--- Previous Refinement Iterations ---\n"
-            for item in draft.refinement_history:
-                role_label = "Manager Instruction" if item["role"] == "manager" else "Your Updated Draft"
-                refinement_history_text += f"{role_label}: {item['content']}\n\n"
-        
-        # Build context with clear distinction between customer and manager
-        draft_context = f"""
-=== DRAFT REFINEMENT TASK ===
-
-You are an AI assistant helping to draft responses to customers. A manager/supervisor is reviewing your draft before it is sent to the customer.
-
---- ORIGINAL CUSTOMER QUESTION ---
-The following question was asked by an END CUSTOMER (not the manager):
-"{draft.original_query}"
-
---- YOUR CURRENT DRAFT RESPONSE ---
-This is what you drafted to send to the customer:
-{draft.current_draft}
-{refinement_history_text}
---- MANAGER'S REFINEMENT INSTRUCTION ---
-The MANAGER (not the customer) is requesting the following changes to your draft:
-"{refinement_request}"
-
---- YOUR TASK ---
-Update your draft response according to the MANAGER's instruction above.
-- The updated response will still be sent to the END CUSTOMER
-- Keep the response appropriate for the customer (they won't see the manager's instruction)
-- Maintain the same professional tone and format
-- Incorporate any missing details or changes the manager requested
-- Do NOT address the manager directly in your response - write as if responding to the customer
-"""
-        
         # Get chat history for context (previous customer-assistant exchanges)
         chat_history = _get_chat_history_sync(session_id, history_k)
         
-        result = rag_service.query(
-            query_text=draft_context,
+        result = rag_service.refine_draft(
+            query_text=refinement_request,
             top_k=top_k,
-            chat_history=chat_history,
             channel=channel,
             similarity_threshold=similarity_threshold,
+            draft=draft,
+            chat_history=chat_history,
         )
         
         return result
