@@ -329,11 +329,12 @@ def _refine_with_rag_sync(
         
         result = rag_service.refine_draft(
             query_text=refinement_request,
+            draft=draft,
             top_k=top_k,
             channel=channel,
             similarity_threshold=similarity_threshold,
-            draft=draft,
             chat_history=chat_history,
+            session_id=session_id,
         )
         
         return result

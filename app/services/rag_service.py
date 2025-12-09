@@ -1,57 +1,205 @@
 """RAG service for querying across knowledge bases."""
 
+from __future__ import annotations
+
+import asyncio
 import json
 import logging
+import os
 import time
-from typing import List, Dict, Any, Optional, AsyncIterator, Set, Tuple
-from llama_index.core.retrievers import QueryFusionRetriever
-from llama_index.core.vector_stores.types import MetadataFilters
-from sqlalchemy.orm import Session
-from sqlalchemy.sql import text
-from llama_index.embeddings.openai import OpenAIEmbedding
-from llama_index.llms.openai import OpenAI
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    AsyncIterator,
+    Dict,
+    List,
+    Optional,
+    Set,
+    Tuple,
+    TypedDict,
+)
+
 from llama_index.core import (
     ChatPromptTemplate,
-    PromptTemplate,
     QueryBundle,
     get_response_synthesizer,
 )
-from llama_index.core.query_engine import RetrieverQueryEngine
 from llama_index.core.llms import ChatMessage as LlamaChatMessage
+from llama_index.core.postprocessor import SentenceTransformerRerank
+from llama_index.core.query_engine import RetrieverQueryEngine
+from llama_index.core.response_synthesizers import BaseSynthesizer
+from llama_index.core.retrievers import BaseRetriever, QueryFusionRetriever
+from llama_index.core.vector_stores.types import MetadataFilters
+from llama_index.embeddings.openai import OpenAIEmbedding
+from llama_index.llms.openai import OpenAI
+from sqlalchemy.orm import Session
+
 from app.config import settings
 from app.models import DraftResponse
-from app.services.extractor import IntentMetadataFilter
-from app.services.performance_tracker import get_performance_tracker, PerformanceTracker
 from app.services.config_service import ConfigService
-import asyncio
-from app.services.prompt import ENHANCED_QUERY_PROMPT
+from app.services.extractor import IntentMetadataFilter
+from app.services.performance_tracker import PerformanceTracker, get_performance_tracker
 from app.services.retriever import BM25Retriever, PostgresRetriever
-from llama_index.core.postprocessor import SentenceTransformerRerank
+
+if TYPE_CHECKING:
+    from llama_index.core.base.response.schema import RESPONSE_TYPE
 
 
 logger = logging.getLogger(__name__)
 
 
+# ============================================================================
+# Enums & Constants
+# ============================================================================
+
+
+class Channel(str, Enum):
+    """Supported communication channels."""
+
+    EMAIL = "email"
+    WHATSAPP = "whatsapp"
+
+    @classmethod
+    def from_string(cls, value: str) -> "Channel":
+        """Convert string to Channel enum, defaulting to EMAIL."""
+        try:
+            return cls(value.lower())
+        except ValueError:
+            return cls.EMAIL
+
+
+class ResponseMode(str, Enum):
+    """Response synthesis modes."""
+
+    REFINE = "refine"
+    COMPACT = "compact"
+    TREE_SUMMARIZE = "tree_summarize"
+    SIMPLE_SUMMARIZE = "simple_summarize"
+    ACCUMULATE = "accumulate"
+    COMPACT_ACCUMULATE = "compact_accumulate"
+    GENERATION = "generation"
+    NO_TEXT = "no_text"
+    CONTEXT_ONLY = "context_only"
+
+
+# ============================================================================
+# Type Definitions
+# ============================================================================
+
+
+class ChunkData(TypedDict):
+    """Type definition for retrieved chunk data."""
+
+    text: str
+    kb_id: Optional[str]
+    kb_name: str
+    similarity: float
+    metadata: Dict[str, Any]
+
+
+class QueryResult(TypedDict):
+    """Type definition for query result."""
+
+    answer: str
+    sources: List[str]
+    kbs_used: List[str]
+    chunks: List[ChunkData]
+    request_id: Optional[str]
+
+
+class EnhancedQueryResult(TypedDict):
+    """Type definition for enhanced query with intents."""
+
+    enhanced_query: str
+    intents: List[str]
+
+
+@dataclass
+class QueryContext:
+    """Context holder for query execution."""
+
+    query_text: str
+    enhanced_query: str
+    intents: List[str]
+    top_k: int
+    similarity_threshold: float
+    channel: Channel
+    chat_history: Optional[List[Dict[str, str]]]
+    session_id: Optional[str]
+    draft_mode: bool
+    request_id: Optional[str] = None
+
+
+@dataclass
+class RetrievalResult:
+    """Result from retrieval phase."""
+
+    chunks: List[ChunkData] = field(default_factory=list)
+    kbs_used: Set[str] = field(default_factory=set)
+    sources: List[str] = field(default_factory=list)
+    context_text: str = ""
+
+
+# ============================================================================
+# RAG Service Implementation
+# ============================================================================
+
+
 class RAGService:
-    """Service for RAG querying using LlamaIndex."""
+    """Service for RAG querying using LlamaIndex.
 
-    def __init__(self, db: Session):
+    This service provides retrieval-augmented generation capabilities,
+    supporting hybrid search (vector + BM25), query enhancement,
+    and multi-channel response formatting.
+    """
+
+    # Proxy environment variables to manage during initialization
+    _PROXY_ENV_VARS: Tuple[str, ...] = (
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "ALL_PROXY",
+        "all_proxy",
+    )
+
+    def __init__(self, db: Session) -> None:
+        """Initialize the RAG service.
+
+        Args:
+            db: SQLAlchemy database session.
+        """
         self.db = db
-        self.embed_model = None
-        self.llm = None
-        self.filters = None
-        self.draft_mode_prompt_template = (
-            None  # pass this in the context on final query if draft_mode is True
-        )
-        self.enhancement_draft_history = (
-            None  # pass this in the context on enhancement query if draft_mode is True
-        )
-
-        # Load configuration first (needed for LLM initialization)
-        self._load_config()
-
-        # Initialize performance tracker
+        self.embed_model: Optional[OpenAIEmbedding] = None
+        self.llm: Optional[OpenAI] = None
+        self.filters: Optional[MetadataFilters] = None
         self.performance_tracker: Optional[PerformanceTracker] = None
+
+        # Draft mode state (set during refine_draft)
+        self._draft_mode_prompt_template: Optional[List[LlamaChatMessage]] = None
+        self._enhancement_draft_history: Optional[List[LlamaChatMessage]] = None
+
+        # Load configuration and initialize clients
+        self._load_config()
+        self._initialize_performance_tracker()
+        self._initialize_openai_clients()
+
+    # ========================================================================
+    # Initialization Methods
+    # ========================================================================
+
+    def _load_config(self) -> None:
+        """Load dynamic configuration from database."""
+        self.llm_config = ConfigService.get_llm_config(self.db)
+        self.rag_config = ConfigService.get_rag_config(self.db)
+        self.retriever_config = ConfigService.get_retriever_config(self.db)
+        self.hybrid_config = ConfigService.get_hybrid_config(self.db)
+        self.prompt_config = ConfigService.get_prompt_config(self.db)
+
+    def _initialize_performance_tracker(self) -> None:
+        """Initialize the performance tracker if enabled."""
         if settings.performance_tracking_enabled:
             self.performance_tracker = get_performance_tracker(
                 log_dir=settings.performance_log_dir,
@@ -61,82 +209,120 @@ class RAGService:
             )
             logger.info("Performance tracking enabled")
 
-        if settings.openai_api_key:
-            # Clear proxy environment variables to avoid OpenAI client initialization issues
-            import os
-
-            proxy_vars = [
-                "HTTP_PROXY",
-                "HTTPS_PROXY",
-                "http_proxy",
-                "https_proxy",
-                "ALL_PROXY",
-                "all_proxy",
-            ]
-            saved_proxies = {}
-            for var in proxy_vars:
-                if var in os.environ:
-                    saved_proxies[var] = os.environ.pop(var)
-
-            try:
-                # Get LLM config from dynamic configuration
-                llm_model = self.llm_config.get("model")
-                llm_temperature = self.llm_config.get("temperature")
-                embedding_model = self.llm_config.get("embedding_model")
-
-                self.embed_model = OpenAIEmbedding(
-                    model=embedding_model,
-                    api_key=settings.openai_api_key,
-                )
-                self.llm = OpenAI(
-                    model=llm_model,
-                    api_key=settings.openai_api_key,
-                    temperature=llm_temperature,
-                )
-                logger.info(
-                    f"""OpenAI clients initialized (embedding: {embedding_model}
-                    LLM: {llm_model}
-                    Temperature: {llm_temperature})"""
-                )
-            except Exception as e:
-                logger.error(f"Error initializing OpenAI clients: {e}", exc_info=True)
-                raise
-            finally:
-                # Restore proxy environment variables
-                for var, value in saved_proxies.items():
-                    os.environ[var] = value
-        else:
+    def _initialize_openai_clients(self) -> None:
+        """Initialize OpenAI embedding and LLM clients."""
+        if not settings.openai_api_key:
             logger.warning("OpenAI API key not configured")
+            return
 
-    def _load_config(self):
-        """Load dynamic configuration from database."""
-        self.llm_config = ConfigService.get_llm_config(self.db)
-        self.rag_config = ConfigService.get_rag_config(self.db)
-        self.retriever_config = ConfigService.get_retriever_config(self.db)
-        self.hybrid_config = ConfigService.get_hybrid_config(self.db)
-        self.prompt_config = ConfigService.get_prompt_config(self.db)
+        # Temporarily clear proxy environment variables
+        saved_proxies = self._clear_proxy_env_vars()
+
+        try:
+            llm_model = self.llm_config.get("model")
+            llm_temperature = self.llm_config.get("temperature")
+            embedding_model = self.llm_config.get("embedding_model")
+
+            self.embed_model = OpenAIEmbedding(
+                model=embedding_model,
+                api_key=settings.openai_api_key,
+            )
+            self.llm = OpenAI(
+                model=llm_model,
+                api_key=settings.openai_api_key,
+                temperature=llm_temperature,
+            )
+
+            logger.info(
+                f"OpenAI clients initialized "
+                f"(embedding: {embedding_model}, LLM: {llm_model}, "
+                f"temperature: {llm_temperature})"
+            )
+        except Exception as e:
+            logger.error(f"Error initializing OpenAI clients: {e}", exc_info=True)
+            raise
+        finally:
+            self._restore_proxy_env_vars(saved_proxies)
+
+    def _clear_proxy_env_vars(self) -> Dict[str, str]:
+        """Clear proxy environment variables and return saved values."""
+        saved_proxies = {}
+        for var in self._PROXY_ENV_VARS:
+            if var in os.environ:
+                saved_proxies[var] = os.environ.pop(var)
+        return saved_proxies
+
+    def _restore_proxy_env_vars(self, saved_proxies: Dict[str, str]) -> None:
+        """Restore previously saved proxy environment variables."""
+        for var, value in saved_proxies.items():
+            os.environ[var] = value
+
+    # ========================================================================
+    # Query Enhancement
+    # ========================================================================
 
     def _get_enhanced_query_and_intents(
         self,
+        *,
         query_text: str,
-        chat_history: List[Dict[str, str]],
+        chat_history: Optional[List[Dict[str, str]]],
         draft_mode: bool,
-    ) -> Tuple[str, List[str]]:
-        """Generate enhanced query using chat history."""
+    ) -> EnhancedQueryResult:
+        """Generate enhanced query and extract intents using LLM.
+
+        Args:
+            query_text: The original user query.
+            chat_history: Previous conversation messages.
+            draft_mode: Whether this is a draft refinement request.
+
+        Returns:
+            EnhancedQueryResult with enhanced query and detected intents.
+        """
         if not self.llm:
-            return query_text, []
+            return {
+                "enhanced_query": query_text,
+                "intents": [],
+            }
 
-        # Use dynamic query enhancement prompt from config
-        SYSTEM_PROMPT = self.prompt_config.get("query_enhancement")
+        messages = self._build_enhancement_messages(
+            query_text=query_text,
+            chat_history=chat_history,
+            draft_mode=draft_mode,
+        )
 
+        response = self.llm.chat(messages)
+        logger.debug(f"Query enhancement response: {response.message.content}")
+
+        return self._parse_enhancement_response(
+            response_content=response.message.content,
+        )
+
+    def _build_enhancement_messages(
+        self,
+        *,
+        query_text: str,
+        chat_history: Optional[List[Dict[str, str]]],
+        draft_mode: bool,
+    ) -> List[LlamaChatMessage]:
+        """Build messages for query enhancement LLM call.
+
+        Args:
+            query_text: The original user query.
+            chat_history: Previous conversation messages.
+            draft_mode: Whether this is a draft refinement request.
+
+        Returns:
+            List of chat messages for the LLM.
+        """
+        system_prompt = self.prompt_config.get("query_enhancement")
         messages = [
             LlamaChatMessage(
                 role="system",
-                content=SYSTEM_PROMPT,
-            ),
+                content=system_prompt,
+            )
         ]
 
-        # Build combined history text for context resolution
+        # Add chat history context
         if chat_history:
             for msg in chat_history:
                 messages.append(
@@ -146,63 +332,104 @@ class RAGService:
                     )
                 )
 
-        if draft_mode and self.draft_mode_prompt_template:
-            messages.extend(self.enhancement_draft_history)
+        # Add draft mode context if applicable
+        if draft_mode and self._draft_mode_prompt_template:
+            messages.extend(self._enhancement_draft_history or [])
 
+        # Add the current query
+        role = "developer" if draft_mode else "user"
         messages.append(
             LlamaChatMessage(
-                role="developer" if draft_mode else "user",
+                role=role,
                 content=query_text,
             )
         )
-        response = self.llm.chat(messages)
-        print(response.message.content, "Response")
+
+        return messages
+
+    def _parse_enhancement_response(
+        self,
+        *,
+        response_content: str,
+    ) -> EnhancedQueryResult:
+        """Parse the LLM response for query enhancement.
+
+        Args:
+            response_content: Raw LLM response content.
+            fallback_query: Query to use if parsing fails.
+
+        Returns:
+            EnhancedQueryResult with enhanced query and intents.
+        """
         try:
-            decoded_response = json.loads(response.message.content)
-            return decoded_response["enhanced_query"], decoded_response["intents"]
-        except Exception as e:
-            logger.error(f"Error decoding response: {e}", exc_info=True)
-            return str(response.message.content).strip(), []
+            decoded_response = json.loads(response_content)
+            return {
+                "enhanced_query": decoded_response["enhanced_query"],
+                "intents": decoded_response.get("intents", []),
+            }
+        except (json.JSONDecodeError, KeyError) as e:
+            logger.error(f"Error parsing enhancement response: {e}", exc_info=True)
+            return {"enhanced_query": str(response_content).strip(), "intents": []}
 
-    def get_system_prompt_for_channel(self, channel: str) -> str:
-        """Return system prompt instructions tailored to a channel."""
-        channel_key = (channel or "email").lower()
+    # ========================================================================
+    # Prompt Building
+    # ========================================================================
 
-        # Use dynamic prompts from configuration
+    def get_system_prompt_for_channel(self, channel: Channel) -> str:
+        """Return system prompt instructions tailored to a channel.
+
+        Args:
+            channel: The communication channel.
+
+        Returns:
+            Combined system prompt for the channel.
+        """
         base_prompt = self.prompt_config.get("base")
-
         channel_prompts = {
-            "email": self.prompt_config.get("email", ""),
-            "whatsapp": self.prompt_config.get("whatsapp", ""),
+            Channel.EMAIL: self.prompt_config.get("email"),
+            Channel.WHATSAPP: self.prompt_config.get("whatsapp"),
         }
 
-        channel_guidance = channel_prompts.get(
-            channel_key, channel_prompts.get("email", "")
-        )
+        channel_guidance = channel_prompts.get(channel, channel_prompts[Channel.EMAIL])
+
         if channel_guidance:
             return f"{base_prompt}\n\n{channel_guidance}"
         return base_prompt
 
     def _build_qa_template(
         self,
-        channel: str,
-        chat_history: List[Dict[str, str]],
+        *,
+        channel: Channel,
+        chat_history: Optional[List[Dict[str, str]]],
         original_query: str,
         intents: List[str],
         draft_mode: bool,
     ) -> ChatPromptTemplate:
+        """Build the QA prompt template for response generation.
+
+        Args:
+            channel: Communication channel for response formatting.
+            chat_history: Previous conversation messages.
+            original_query: The user's original query.
+            intents: Detected query intents.
+            draft_mode: Whether this is a draft refinement.
+
+        Returns:
+            ChatPromptTemplate for the response synthesizer.
+        """
         system_prompt = self.get_system_prompt_for_channel(channel)
-        # We need to include chat history in the prompt if provided
-        messages = [
+        messages: List[LlamaChatMessage] = [
             LlamaChatMessage(
                 role="system",
                 content=system_prompt,
-            ),
+            )
         ]
 
-        if draft_mode and self.draft_mode_prompt_template:
-            messages.extend(self.draft_mode_prompt_template)
+        # Add draft mode template if applicable
+        if draft_mode and self._draft_mode_prompt_template:
+            messages.extend(self._draft_mode_prompt_template)
 
+        # Add chat history
         if chat_history:
             for msg in chat_history:
                 messages.append(
@@ -212,6 +439,8 @@ class RAGService:
                     )
                 )
 
+        # Add context and query messages
+        developer_or_user = "developer" if draft_mode else "user"
         messages.extend(
             [
                 LlamaChatMessage(
@@ -219,7 +448,7 @@ class RAGService:
                     content="Context:\n---------------------\n{context_str}\n---------------------",
                 ),
                 LlamaChatMessage(
-                    role="developer" if draft_mode else "user",
+                    role=developer_or_user,
                     content=f"Original Query:\n-------------------\n{original_query}\n-------------------",
                 ),
                 LlamaChatMessage(
@@ -227,259 +456,409 @@ class RAGService:
                     content=f"Intents: {intents}",
                 ),
                 LlamaChatMessage(
-                    role="developer" if draft_mode else "user",
+                    role=developer_or_user,
                     content="Answer the query strictly based on the above context.\n Enhanced Query: {query_str}\n",
                 ),
             ]
         )
-        return ChatPromptTemplate(
-            message_templates=messages,
+
+        return ChatPromptTemplate(message_templates=messages)
+
+    # ========================================================================
+    # Retriever Configuration
+    # ========================================================================
+
+    def _create_metadata_filters(self, intents: List[str]) -> Optional[MetadataFilters]:
+        """Create metadata filters based on intents.
+
+        Args:
+            intents: List of detected intents.
+
+        Returns:
+            MetadataFilters if intent filtering is enabled, None otherwise.
+        """
+        if not self.retriever_config["vector"]["use_intent_filter"]:
+            return None
+
+        return MetadataFilters(
+            filters=[
+                IntentMetadataFilter(
+                    key="intent_categories",
+                    value=intents,
+                )
+            ]
         )
+
+    def _create_retrievers(
+        self,
+        *,
+        similarity_threshold: float,
+        metadata_filters: Optional[MetadataFilters],
+        request_id: Optional[str],
+    ) -> List[BaseRetriever]:
+        """Create the list of retrievers for hybrid search.
+
+        Args:
+            similarity_threshold: Minimum similarity score for vector search.
+            metadata_filters: Optional metadata filters.
+            request_id: Request ID for performance tracking.
+
+        Returns:
+            List of configured retrievers.
+        """
+        retrievers: List[BaseRetriever] = []
+
+        # Vector retriever (always included)
+        vector_retriever = PostgresRetriever(
+            db=self.db,
+            embed_model=self.embed_model,
+            similarity_threshold=similarity_threshold,
+            performance_tracker=self.performance_tracker,
+            request_id=request_id,
+            metadata_filters=metadata_filters,
+        )
+        retrievers.append(vector_retriever)
+
+        # BM25 retriever (optional)
+        if self.retriever_config["bm25"]["enabled"]:
+            bm25_retriever = BM25Retriever(
+                db=self.db,
+                performance_tracker=self.performance_tracker,
+                request_id=request_id,
+            )
+            retrievers.append(bm25_retriever)
+
+        return retrievers
+
+    def _create_hybrid_retriever(
+        self,
+        *,
+        retrievers: List[BaseRetriever],
+        top_k: int,
+    ) -> QueryFusionRetriever:
+        """Create the hybrid fusion retriever.
+
+        Args:
+            retrievers: List of base retrievers to combine.
+            top_k: Number of top results to return.
+
+        Returns:
+            Configured QueryFusionRetriever.
+        """
+        return QueryFusionRetriever(
+            retrievers=retrievers,
+            similarity_top_k=top_k,
+            num_queries=self.hybrid_config["num_queries"],
+            query_gen_prompt=self.prompt_config.get("query_enhancement"),
+            mode=self.hybrid_config["mode"],
+            use_async=False,
+            llm=self.llm,
+        )
+
+    def _create_response_synthesizer(
+        self,
+        *,
+        qa_template: ChatPromptTemplate,
+    ) -> BaseSynthesizer:
+        """Create the response synthesizer.
+
+        Args:
+            qa_template: The QA prompt template.
+
+        Returns:
+            Configured response synthesizer.
+        """
+        response_mode = self.rag_config["response_mode"]
+        return get_response_synthesizer(
+            llm=self.llm,
+            text_qa_template=qa_template,
+            response_mode=response_mode,
+        )
+
+    def _create_node_postprocessors(self, *, top_k: int) -> List[Any]:
+        """Create node postprocessors for reranking.
+
+        Args:
+            top_k: Number of top results to keep after reranking.
+
+        Returns:
+            List of node postprocessors.
+        """
+        postprocessors = []
+
+        if self.retriever_config["use_reranker"]:
+            reranker = SentenceTransformerRerank(
+                top_n=top_k,
+                model="BAAI/bge-reranker-large",
+            )
+            postprocessors.append(reranker)
+
+        return postprocessors
+
+    # ========================================================================
+    # Result Processing
+    # ========================================================================
+
+    def _extract_retrieval_result(
+        self,
+        response: "RESPONSE_TYPE",
+    ) -> RetrievalResult:
+        """Extract structured results from the query response.
+
+        Args:
+            response: The LlamaIndex query response.
+
+        Returns:
+            RetrievalResult with chunks, sources, and metadata.
+        """
+        result = RetrievalResult()
+
+        for node_with_score in response.source_nodes:
+            node = node_with_score.node
+            score = node_with_score.score
+
+            kb_name = node.metadata.get("kb_name", "Unknown")
+            chunk_text = node.get_content()
+            result.context_text += chunk_text + "\n\n"
+
+            chunk_data: ChunkData = {
+                "text": chunk_text,
+                "kb_id": node.metadata.get("kb_id"),
+                "kb_name": kb_name,
+                "similarity": score,
+                "metadata": node.metadata,
+            }
+            result.chunks.append(chunk_data)
+            result.kbs_used.add(kb_name)
+
+            if "file_path" in node.metadata:
+                result.sources.append(node.metadata["file_path"])
+
+        return result
+
+    def _build_query_result(
+        self,
+        *,
+        answer_text: str,
+        retrieval_result: RetrievalResult,
+        request_id: Optional[str],
+    ) -> QueryResult:
+        """Build the final query result.
+
+        Args:
+            answer_text: Generated answer text.
+            retrieval_result: Results from retrieval phase.
+            request_id: Optional request ID for tracking.
+
+        Returns:
+            QueryResult dictionary.
+        """
+        result: QueryResult = {
+            "answer": answer_text,
+            "sources": list(set(retrieval_result.sources)),
+            "kbs_used": list(retrieval_result.kbs_used),
+            "chunks": retrieval_result.chunks,
+            "request_id": request_id,
+        }
+        return result
+
+    # ========================================================================
+    # Performance Tracking
+    # ========================================================================
+
+    def _track_query_metrics(
+        self,
+        *,
+        request_id: str,
+        original_query: str,
+        enhanced_query: str,
+        channel: Channel,
+        chat_history_length: int,
+    ) -> None:
+        """Record query-related performance metrics.
+
+        Args:
+            request_id: Request ID for tracking.
+            original_query: Original user query.
+            enhanced_query: Enhanced query after LLM processing.
+            channel: Communication channel.
+            chat_history_length: Number of messages in chat history.
+        """
+        if not self.performance_tracker or not request_id:
+            return
+
+        self.performance_tracker.record_query(
+            request_id=request_id,
+            original_query=original_query,
+            enhanced_query=enhanced_query,
+            channel=channel.value,
+            chat_history_length=chat_history_length,
+        )
+
+    def _track_timing(
+        self,
+        *,
+        request_id: Optional[str],
+        metric_name: str,
+        duration_ms: float,
+    ) -> None:
+        """Record a timing metric.
+
+        Args:
+            request_id: Request ID for tracking.
+            metric_name: Name of the metric.
+            duration_ms: Duration in milliseconds.
+        """
+        if self.performance_tracker and request_id:
+            self.performance_tracker._record_timing(
+                request_id, metric_name, duration_ms
+            )
+
+    def _record_performance_metrics(
+        self,
+        *,
+        request_id: Optional[str],
+        chunks: List[ChunkData],
+        top_k: int,
+        similarity_threshold: float,
+        kbs_used: Set[str],
+        template_str: ChatPromptTemplate,
+        answer_text: str,
+        context_text: str,
+        sources: List[str],
+    ) -> None:
+        """Record comprehensive performance metrics.
+
+        Args:
+            request_id: Request ID for tracking.
+            chunks: Retrieved chunks.
+            top_k: Number of chunks requested.
+            similarity_threshold: Similarity threshold used.
+            kbs_used: Set of knowledge bases used.
+            template_str: Prompt template used.
+            answer_text: Generated answer.
+            context_text: Combined context from chunks.
+            sources: List of source file paths.
+        """
+        if not self.performance_tracker or not request_id:
+            return
+
+        self.performance_tracker.record_retrieval(
+            request_id=request_id,
+            chunks=chunks,
+            top_k=top_k,
+            similarity_threshold=similarity_threshold,
+            knowledge_bases=list(kbs_used),
+        )
+
+        self.performance_tracker.record_generation(
+            request_id=request_id,
+            model_name=self.llm_config.get("model", "gpt-4o-mini"),
+            temperature=self.llm_config.get("temperature", 0.0),
+            prompt_text=template_str,
+            response_text=answer_text,
+            context_text=context_text,
+        )
+
+        # Add additional metadata
+        metadata_items = [
+            ("top_k", top_k),
+            ("similarity_threshold", similarity_threshold),
+            ("embedding_model", self.llm_config.get("embedding_model")),
+            ("sources_count", len(set(sources))),
+        ]
+        for key, value in metadata_items:
+            self.performance_tracker.add_metadata(
+                request_id=request_id,
+                key=key,
+                value=value,
+            )
+
+    def _finalize_performance_tracking(
+        self,
+        *,
+        request_id: Optional[str],
+    ) -> None:
+        """Finalize performance tracking and log summary.
+
+        Args:
+            request_id: Request ID for tracking.
+        """
+        if not self.performance_tracker or not request_id:
+            return
+
+        record = self.performance_tracker.end_request(request_id)
+        if record:
+            logger.info(
+                f"Query completed - Total: {record.timing.total_pipeline_ms:.2f}ms, "
+                f"Retrieval: {record.timing.retrieval_total_ms:.2f}ms, "
+                f"Generation: {record.timing.llm_generation_ms:.2f}ms, "
+                f"Chunks: {record.retrieval.chunks_retrieved}"
+            )
+
+    # ========================================================================
+    # Main Query Method
+    # ========================================================================
 
     def query(
         self,
         query_text: str,
+        *,
         top_k: Optional[int] = None,
         chat_history: Optional[List[Dict[str, str]]] = None,
         channel: str = "email",
         similarity_threshold: Optional[float] = None,
         session_id: Optional[str] = None,
-        draft_mode: Optional[bool] = False,
-    ) -> Dict[str, Any]:
+        draft_mode: bool = False,
+    ) -> QueryResult:
         """Query across all knowledge bases.
 
         Args:
-            query_text: User query
-            top_k: Number of chunks to retrieve (uses config default if None)
-            similarity_threshold: Similarity threshold for retrieving chunks (uses config default if None)
-            channel: Output channel style (email or whatsapp)
-            session_id: Optional session ID for tracking
+            query_text: User query text.
+            top_k: Number of chunks to retrieve (uses config default if None).
+            chat_history: Previous conversation messages.
+            channel: Output channel style (email or whatsapp).
+            similarity_threshold: Similarity threshold for retrieving chunks.
+            session_id: Optional session ID for tracking.
+            draft_mode: Whether this is a draft refinement request.
 
         Returns:
-            Dictionary with answer, sources, and metadata
+            QueryResult with answer, sources, and metadata.
+
+        Raises:
+            Exception: If query execution fails.
         """
-        # Use dynamic defaults from configuration if not provided
-        if top_k is None:
-            top_k = self.rag_config.get("top_k")  # top k for end of result
-        if similarity_threshold is None:
-            similarity_threshold = self.rag_config.get("similarity_threshold")
-
-        logger.info(
-            f"Processing query: '{query_text[:50]}...' (top_k={top_k}, similarity_threshold={similarity_threshold})"
-        )
-
         # Reload configuration to get latest values
         self._load_config()
 
-        # PERFORMANCE TRACKING: Start performance tracking
+        # Apply defaults from configuration
+        top_k = top_k or self.rag_config.get("top_k")
+        similarity_threshold = similarity_threshold or self.rag_config.get(
+            "similarity_threshold"
+        )
+        channel_enum = Channel.from_string(channel)
+
+        logger.info(
+            f"Processing query: '{query_text[:50]}...' "
+            f"(top_k={top_k}, similarity_threshold={similarity_threshold})"
+        )
+
+        # Start performance tracking
         request_id = None
         if self.performance_tracker:
             request_id = self.performance_tracker.start_request(session_id=session_id)
 
         try:
-            if not self.embed_model or not self.llm:
-                logger.warning(
-                    "OpenAI API key not configured, returning error response"
-                )
-
-                # PERFORMANCE TRACKING: Record error
-                if self.performance_tracker and request_id:
-                    self.performance_tracker.record_error(
-                        request_id,
-                        ValueError("OpenAI API key not configured"),
-                        error_context="initialization",
-                    )
-                    self.performance_tracker.end_request(request_id)
-                return {
-                    "answer": "OpenAI API key not configured.",
-                    "sources": [],
-                    "kbs_used": [],
-                    "chunks": [],
-                }
-
-            # PERFORMANCE TRACKING: Track query enhancement
-            enhancement_start = time.perf_counter()
-            enhanced_query, intents = self._get_enhanced_query_and_intents(
+            return self._execute_query(
                 query_text=query_text,
-                chat_history=chat_history,
-                draft_mode=draft_mode,
-            )
-
-            enhancement_time_ms = (time.perf_counter() - enhancement_start) * 1000
-
-            logger.info(f"Enhanced query: {enhanced_query}")
-
-            # PERFORMANCE TRACKING: Record query metrics
-            if self.performance_tracker and request_id:
-                self.performance_tracker._record_timing(
-                    request_id, "query_enhancement", enhancement_time_ms
-                )
-                self.performance_tracker.record_query(
-                    request_id=request_id,
-                    original_query=query_text,
-                    enhanced_query=enhanced_query,
-                    channel=channel,
-                    chat_history_length=len(chat_history) if chat_history else 0,
-                )
-            # add metadata filters to the query
-
-            if self.retriever_config["vector"]["use_intent_filter"]:
-                self.filters = MetadataFilters(
-                    filters=[
-                        IntentMetadataFilter(
-                            key="intent_categories",
-                            value=intents,
-                        ),
-                    ]
-                )
-
-            # Initialize Retriever with performance tracking and dynamic config
-            vector_retriever = PostgresRetriever(
-                db=self.db,
-                embed_model=self.embed_model,
-                similarity_threshold=similarity_threshold,
-                performance_tracker=self.performance_tracker,
-                request_id=request_id,
-                metadata_filters=self.filters,
-            )
-
-            # Build retrievers list based on BM25 enabled setting
-            retrievers = [vector_retriever]
-            if self.retriever_config["bm25"]["enabled"]:
-                bm25_retriever = BM25Retriever(
-                    db=self.db,
-                    performance_tracker=self.performance_tracker,
-                    request_id=request_id,
-                )
-                retrievers.append(bm25_retriever)
-
-            # Use dynamic hybrid retriever configuration
-            hybrid_retriever = QueryFusionRetriever(
-                retrievers=retrievers,
-                similarity_top_k=top_k,
-                num_queries=self.hybrid_config[
-                    "num_queries"
-                ],  # More than one if you want to generate multiple queries for similarity search,
-                query_gen_prompt=self.prompt_config.get(
-                    "query_enhancement"
-                ),  # only used when num_queris > 1
-                mode=self.hybrid_config[
-                    "mode"
-                ],  # options: RRF, Relative Score, Distance Base Score, Simple Score
-                use_async=False,
-                llm=self.llm,
-            )
-            # RRF is a rank aggregation method that combines rankings from multiple sources into a single, unified ranking, using the formula: score = sum over all retrievers of (1 / (k + rank)), where k is typically 60
-
-            # Build Prompt Template
-            prompt_construction_start = time.perf_counter()
-            qa_template = self._build_qa_template(
-                channel=channel,
-                chat_history=chat_history,
-                original_query=query_text,
-                intents=intents,
-                draft_mode=draft_mode,
-            )
-            prompt_construction_time_ms = (
-                time.perf_counter() - prompt_construction_start
-            ) * 1000
-
-            if self.performance_tracker and request_id:
-                self.performance_tracker._record_timing(
-                    request_id, "prompt_construction", prompt_construction_time_ms
-                )
-
-            # Configure Response Synthesizer with dynamic response mode
-            response_mode = self.rag_config["response_mode"]
-            response_synthesizer = get_response_synthesizer(
-                llm=self.llm,
-                text_qa_template=qa_template,
-                response_mode=response_mode,  # OPTIONSL: refine, compact, tree_sumarize, simple_summarize, accumulate,compact_accumulate, generation, no_text, context_only.
-            )
-            preprocessor = []
-            if self.retriever_config["use_reranker"]:
-                reranker = SentenceTransformerRerank(
-                    top_n=top_k,
-                    model="BAAI/bge-reranker-large",
-                )
-                preprocessor.append(reranker)
-
-            # Configure Query Engine
-            query_engine = RetrieverQueryEngine(
-                retriever=hybrid_retriever,
-                response_synthesizer=response_synthesizer,
-                node_postprocessors=preprocessor,
-            )
-
-            # PERFORMANCE TRACKING: Execute Query with timing
-            llm_generation_start = time.perf_counter()
-            response = query_engine.query(
-                str_or_query_bundle=QueryBundle(
-                    query_str=query_text, #NO USE FOR NOW.
-                    custom_embedding_strs=[enhanced_query],
-                ),
-            )
-            llm_generation_time_ms = (time.perf_counter() - llm_generation_start) * 1000
-
-            if self.performance_tracker and request_id:
-                self.performance_tracker._record_timing(
-                    request_id, "llm_generation", llm_generation_time_ms
-                )
-
-            # Extract response and metadata
-            answer_text = str(response)
-
-            chunks = []
-            kbs_used = set()
-            sources = []
-            context_text = ""
-
-            for node_with_score in response.source_nodes:
-                node = node_with_score.node
-                score = node_with_score.score
-
-                kb_name = node.metadata.get("kb_name", "Unknown")
-                chunk_text = node.get_content()
-                context_text += chunk_text + "\n\n"
-
-                chunks.append(
-                    {
-                        "text": chunk_text,
-                        "kb_id": node.metadata.get("kb_id"),
-                        "kb_name": kb_name,
-                        "similarity": score,
-                        "metadata": node.metadata,
-                    }
-                )
-                kbs_used.add(kb_name)
-                if "file_path" in node.metadata:
-                    sources.append(node.metadata["file_path"])
-
-            # PERFORMANCE TRACKING: Record performance metrics
-            self._record_performance_metrics(
-                request_id=request_id,
-                chunks=chunks,
                 top_k=top_k,
+                chat_history=chat_history,
+                channel=channel_enum,
                 similarity_threshold=similarity_threshold,
-                kbs_used=kbs_used,
-                template_str=qa_template,
-                answer_text=answer_text,
-                context_text=context_text,
-                sources=sources,
+                session_id=session_id,
+                draft_mode=draft_mode,
+                request_id=request_id,
             )
-
-            result = {
-                "answer": answer_text,
-                "sources": list(set(sources)),
-                "kbs_used": list(kbs_used),
-                "chunks": chunks,
-            }
-
-            # Add performance tracking info to result if available
-            if request_id:
-                result["request_id"] = request_id
-
-            return result
 
         except Exception as e:
             logger.error(f"Error during query: {e}", exc_info=True)
@@ -490,147 +869,323 @@ class RAGService:
             raise
 
         finally:
-            # PERFORMANCE TRACKING: End performance tracking
-            if self.performance_tracker and request_id:
-                record = self.performance_tracker.end_request(request_id)
-                if record:
-                    logger.info(
-                        f"Query completed - Total: {record.timing.total_pipeline_ms:.2f}ms, "
-                        f"Retrieval: {record.timing.retrieval_total_ms:.2f}ms, "
-                        f"Generation: {record.timing.llm_generation_ms:.2f}ms, "
-                        f"Chunks: {record.retrieval.chunks_retrieved}"
-                    )
+            self._finalize_performance_tracking(request_id=request_id)
 
-    def _record_performance_metrics(
+    def _execute_query(
         self,
-        request_id: str,
-        chunks: List[Dict[str, Any]],
+        *,
+        query_text: str,
         top_k: int,
+        chat_history: Optional[List[Dict[str, str]]],
+        channel: Channel,
         similarity_threshold: float,
-        kbs_used: Set[str],
-        template_str: ChatPromptTemplate,
-        answer_text: str,
-        context_text: str,
-        sources: List[str],
-    ):
-        """Record performance metrics."""
+        session_id: Optional[str],
+        draft_mode: bool,
+        request_id: Optional[str],
+    ) -> QueryResult:
+        """Execute the query pipeline.
 
-        # Record retrieval and generation metrics
+        Args:
+            query_text: User query text.
+            top_k: Number of chunks to retrieve.
+            chat_history: Previous conversation messages.
+            channel: Communication channel.
+            similarity_threshold: Similarity threshold for retrieval.
+            session_id: Session ID for tracking.
+            draft_mode: Whether this is a draft refinement.
+            request_id: Request ID for performance tracking.
+
+        Returns:
+            QueryResult with answer, sources, and metadata.
+        """
+        # Check for required clients
+        if not self.embed_model or not self.llm:
+            logger.warning("OpenAI API key not configured, returning error response")
+            self._handle_missing_api_key_error(request_id=request_id)
+            return {
+                "answer": "OpenAI API key not configured.",
+                "sources": [],
+                "kbs_used": [],
+                "chunks": [],
+                "request_id": None,
+            }
+
+        # Step 1: Enhance query
+        enhancement_start = time.perf_counter()
+        enhancement_result = self._get_enhanced_query_and_intents(
+            query_text=query_text,
+            chat_history=chat_history,
+            draft_mode=draft_mode,
+        )
+        enhanced_query = enhancement_result["enhanced_query"]
+        intents = enhancement_result["intents"]
+        enhancement_time_ms = (time.perf_counter() - enhancement_start) * 1000
+
+        logger.info(f"Enhanced query: {enhanced_query}")
+        self._track_timing(
+            request_id=request_id,
+            metric_name="query_enhancement",
+            duration_ms=enhancement_time_ms,
+        )
+        self._track_query_metrics(
+            request_id=request_id,
+            original_query=query_text,
+            enhanced_query=enhanced_query,
+            channel=channel,
+            chat_history_length=len(chat_history) if chat_history else 0,
+        )
+
+        # Step 2: Create retrievers
+        metadata_filters = self._create_metadata_filters(intents)
+        retrievers = self._create_retrievers(
+            similarity_threshold=similarity_threshold,
+            metadata_filters=metadata_filters,
+            request_id=request_id,
+        )
+        hybrid_retriever = self._create_hybrid_retriever(
+            retrievers=retrievers,
+            top_k=top_k,
+        )
+
+        # Step 3: Build prompt template
+        prompt_start = time.perf_counter()
+        qa_template = self._build_qa_template(
+            channel=channel,
+            chat_history=chat_history,
+            original_query=query_text,
+            intents=intents,
+            draft_mode=draft_mode,
+        )
+        prompt_time_ms = (time.perf_counter() - prompt_start) * 1000
+        self._track_timing(
+            request_id=request_id,
+            metric_name="prompt_construction",
+            duration_ms=prompt_time_ms,
+        )
+
+        # Step 4: Create query engine
+        response_synthesizer = self._create_response_synthesizer(
+            qa_template=qa_template
+        )
+        postprocessors = self._create_node_postprocessors(top_k=top_k)
+        query_engine = RetrieverQueryEngine(
+            retriever=hybrid_retriever,
+            response_synthesizer=response_synthesizer,
+            node_postprocessors=postprocessors,
+        )
+
+        # Step 5: Execute query
+        llm_start = time.perf_counter()
+        response = query_engine.query(
+            str_or_query_bundle=QueryBundle(
+                query_str=query_text,
+                custom_embedding_strs=[enhanced_query],
+            )
+        )
+        llm_time_ms = (time.perf_counter() - llm_start) * 1000
+        self._track_timing(
+            request_id=request_id,
+            metric_name="llm_generation",
+            duration_ms=llm_time_ms,
+        )
+
+        # Step 6: Process results
+        answer_text = str(response)
+        retrieval_result = self._extract_retrieval_result(response)
+
+        # Step 7: Record metrics
+        self._record_performance_metrics(
+            request_id=request_id,
+            chunks=retrieval_result.chunks,
+            top_k=top_k,
+            similarity_threshold=similarity_threshold,
+            kbs_used=retrieval_result.kbs_used,
+            template_str=qa_template,
+            answer_text=answer_text,
+            context_text=retrieval_result.context_text,
+            sources=retrieval_result.sources,
+        )
+
+        return self._build_query_result(
+            answer_text=answer_text,
+            retrieval_result=retrieval_result,
+            request_id=request_id,
+        )
+
+    def _handle_missing_api_key_error(
+        self,
+        *,
+        request_id: Optional[str],
+    ) -> None:
+        """Handle the case when API key is not configured.
+
+        Args:
+            request_id: Request ID for error tracking.
+        """
         if self.performance_tracker and request_id:
-            self.performance_tracker.record_retrieval(
-                request_id=request_id,
-                chunks=chunks,
-                top_k=top_k,
-                similarity_threshold=similarity_threshold,
-                knowledge_bases=list(kbs_used),
+            self.performance_tracker.record_error(
+                request_id,
+                ValueError("OpenAI API key not configured"),
+                error_context="initialization",
             )
+            self.performance_tracker.end_request(request_id)
 
-            self.performance_tracker.record_generation(
-                request_id=request_id,
-                model_name=self.llm_config.get("model", "gpt-4o-mini"),
-                temperature=self.llm_config.get("temperature", 0.0),
-                prompt_text=template_str,
-                response_text=answer_text,
-                context_text=context_text,
-            )
+    # ========================================================================
+    # Streaming Query
+    # ========================================================================
 
-            # Add additional metadata
-            self.performance_tracker.add_metadata(
-                request_id=request_id,
-                key="top_k",
-                value=top_k,
-            )
-            self.performance_tracker.add_metadata(
-                request_id=request_id,
-                key="similarity_threshold",
-                value=similarity_threshold,
-            )
-            self.performance_tracker.add_metadata(
-                request_id=request_id,
-                key="embedding_model",
-                value=self.llm_config.get("embedding_model"),
-            )
-            self.performance_tracker.add_metadata(
-                request_id=request_id, key="sources_count", value=len(set(sources))
-            )
+    async def stream_query(
+        self,
+        query_text: str,
+        *,
+        top_k: int = 5,
+        chat_history: Optional[List[Dict[str, str]]] = None,
+        channel: str = "email",
+        similarity_threshold: Optional[float] = None,
+        session_id: Optional[str] = None,
+    ) -> AsyncIterator[str]:
+        """Stream query response in chunks.
 
-    async def stream_query(self, query_text: str, top_k: int = 5) -> AsyncIterator[str]:
-        """Stream query response."""
-        # For streaming, we need to setup the engine similar to query()
-        # This is a bit inefficient to re-init every time, but necessary for dynamic prompts (channel/history)
-        # In a real app, we might cache engines or use a factory.
+        Args:
+            query_text: User query text.
+            top_k: Number of chunks to retrieve.
+            chat_history: Previous conversation messages.
+            channel: Output channel style.
+            similarity_threshold: Similarity threshold for retrieval.
+            session_id: Session ID for tracking.
 
-        # NOTE: For simplicity in this refactor, we will just call the sync query
-        # because the method signature doesn't pass channel/history which we need for the prompt!
-        # If we want true streaming with the correct prompt, we'd need those args here too.
-        # Assuming defaults for now or wrapping sync as before.
+        Yields:
+            Chunks of the response text.
 
-        # To do it properly:
-        # 1. We need channel/history in stream_query signature (breaking change?)
-        # 2. Or we assume default channel.
+        Note:
+            Currently wraps the synchronous query method.
+            Future implementation could use true streaming from LLM.
+        """
+        result = await asyncio.to_thread(
+            self.query,
+            query_text,
+            top_k=top_k,
+            chat_history=chat_history,
+            channel=channel,
+            similarity_threshold=similarity_threshold,
+            session_id=session_id,
+        )
 
-        # Let's wrap sync for now to avoid breaking signature,
-        # OR use a default engine.
-
-        result = await asyncio.to_thread(self.query, query_text, top_k)
         answer = result["answer"]
         chunk_size = 50
         for i in range(0, len(answer), chunk_size):
             yield answer[i : i + chunk_size]
 
+    # ========================================================================
+    # Draft Refinement
+    # ========================================================================
+
     def refine_draft(
         self,
+        *,
         query_text: str,
-        top_k: int,
-        channel: str,
-        similarity_threshold: float,
         draft: DraftResponse,
+        top_k: int,
+        channel: str = "email",
+        similarity_threshold: float,
         chat_history: Optional[List[Dict[str, str]]] = None,
-    ) -> Dict[str, Any]:
-        """Refine draft response."""
+        session_id: Optional[str] = None,
+    ) -> QueryResult:
+        """Refine a draft response based on user feedback.
 
-        messages = [
+        This method prepares the draft context and refinement history,
+        then executes a query in draft mode to generate an improved response.
+
+        Args:
+            query_text: The refinement request/feedback from user.
+            draft: The DraftResponse object containing current draft and history.
+            top_k: Number of chunks to retrieve.
+            channel: Output channel style (email or whatsapp).
+            similarity_threshold: Similarity threshold for retrieval.
+            chat_history: Previous conversation messages.
+            session_id: Session ID for tracking.
+
+        Returns:
+            QueryResult with refined answer, sources, and metadata.
+        """
+        # Build refinement context messages
+        self._setup_draft_refinement_context(draft=draft)
+
+        # Execute query in draft mode
+        return self.query(
+            query_text,
+            top_k=top_k,
+            chat_history=chat_history,
+            channel=channel,
+            similarity_threshold=similarity_threshold,
+            session_id=session_id,
+            draft_mode=True,
+        )
+
+    def _setup_draft_refinement_context(
+        self,
+        *,
+        draft: DraftResponse,
+    ) -> None:
+        """Setup the context for draft refinement.
+
+        Prepares the draft mode prompt template and enhancement history
+        based on the draft's refinement history and current state.
+
+        Args:
+            draft: The DraftResponse object containing current draft and history.
+        """
+        # Start with refine draft system prompt
+        messages: List[LlamaChatMessage] = [
             LlamaChatMessage(
                 role="system",
                 content=self.prompt_config.get("refine_draft"),
-            ),
+            )
         ]
 
-        enhancement_draft_history = []
+        # Build enhancement history from refinement history
+        enhancement_history: List[LlamaChatMessage] = []
+
         if draft.refinement_history:
             for item in draft.refinement_history:
-                enhancement_draft_history.append(
+                enhancement_history.append(
                     LlamaChatMessage(
                         role=item["role"],
                         content=item["content"],
                     )
                 )
 
+        # Add current draft as assistant message
         if draft.current_draft:
-            enhancement_draft_history.append(
+            enhancement_history.append(
                 LlamaChatMessage(
                     role="assistant",
                     content=draft.current_draft,
                 )
             )
 
+        # Add original query context
         if draft.original_query:
-            enhancement_draft_history.append(
+            enhancement_history.append(
                 LlamaChatMessage(
                     role="user",
-                    content=f"Original Query From user:\n-------------------\n{draft.original_query}\n-------------------",
+                    content=(
+                        f"Original Query From user:\n-------------------\n"
+                        f"{draft.original_query}\n-------------------"
+                    ),
                 )
             )
-        
-        messages.extend(enhancement_draft_history)
-        self.enhancement_draft_history = enhancement_draft_history
-        self.draft_mode_prompt_template = messages
 
-        return self.query(
-            query_text=query_text,
-            top_k=top_k,
-            chat_history=chat_history,
-            channel=channel,
-            similarity_threshold=similarity_threshold,
-            draft_mode=True,
-        )
+        # Combine messages and set state
+        messages.extend(enhancement_history)
+        self._enhancement_draft_history = enhancement_history
+        self._draft_mode_prompt_template = messages
+
+    def clear_draft_context(self) -> None:
+        """Clear the draft mode context.
+
+        Should be called after draft refinement is complete to prevent
+        draft context from leaking into subsequent queries.
+        """
+        self._draft_mode_prompt_template = None
+        self._enhancement_draft_history = None
