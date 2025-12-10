@@ -625,7 +625,7 @@ class RAGService:
                 "text": chunk_text,
                 "kb_id": node.metadata.get("kb_id"),
                 "kb_name": kb_name,
-                "similarity": score,
+                "similarity": float(score) if score is not None else None,
                 "metadata": node.metadata,
             }
             result.chunks.append(chunk_data)
