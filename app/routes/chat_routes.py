@@ -143,6 +143,7 @@ def _query_with_history_sync(
 
 # ==================== Co-pilot Mode Functions ====================
 
+
 def _get_session_copilot_mode_sync(session_id: str) -> bool:
     """Get co-pilot mode status for a session."""
     db = next(get_db())
@@ -167,21 +168,30 @@ def _toggle_copilot_mode_sync(session_id: str, enabled: bool):
         db.close()
 
 
-def _create_draft_sync(session_id: str, original_query: str, draft_content: str, sources_data: dict = None):
+def _create_draft_sync(
+    session_id: str,
+    original_query: str,
+    draft_content: str,
+    sources_data: dict = None,
+):
     """Create a new draft response."""
     db = next(get_db())
     try:
         # First, discard any existing active drafts for this session
-        existing_drafts = db.execute(
-            select(DraftResponse).where(
-                DraftResponse.session_id == uuid.UUID(session_id),
-                DraftResponse.status == "active"
+        existing_drafts = (
+            db.execute(
+                select(DraftResponse).where(
+                    DraftResponse.session_id == uuid.UUID(session_id),
+                    DraftResponse.status == "active",
+                )
             )
-        ).scalars().all()
-        
+            .scalars()
+            .all()
+        )
+
         for draft in existing_drafts:
             draft.status = "discarded"
-        
+
         # Create new draft
         draft = DraftResponse(
             session_id=uuid.UUID(session_id),
@@ -189,7 +199,7 @@ def _create_draft_sync(session_id: str, original_query: str, draft_content: str,
             current_draft=draft_content,
             refinement_history=[],
             sources_data=sources_data or {},
-            status="active"
+            status="active",
         )
         db.add(draft)
         db.commit()
@@ -204,10 +214,12 @@ def _get_active_draft_sync(session_id: str):
     db = next(get_db())
     try:
         result = db.execute(
-            select(DraftResponse).where(
+            select(DraftResponse)
+            .where(
                 DraftResponse.session_id == uuid.UUID(session_id),
-                DraftResponse.status == "active"
-            ).order_by(desc(DraftResponse.created_at))
+                DraftResponse.status == "active",
+            )
+            .order_by(desc(DraftResponse.created_at))
         )
         return result.scalar_one_or_none()
     finally:
@@ -222,17 +234,21 @@ def _refine_draft_sync(draft_id: str, refinement_request: str, new_content: str)
         if draft and draft.status == "active":
             # Add to refinement history
             # Note: Using "developer" role to distinguish from end-user messages
-            # This helps the AI understand that refinement requests come from 
+            # This helps the AI understand that refinement requests come from
             # a developer(manager) reviewing the draft, not the end customer
             history = list(draft.refinement_history) if draft.refinement_history else []
-            history.append({
-                "role": "developer",
-                "content": refinement_request,
-            })
-            history.append({
-                "role": "assistant",
-                "content": new_content,
-            })
+            history.append(
+                {
+                    "role": "developer",
+                    "content": refinement_request,
+                }
+            )
+            history.append(
+                {
+                    "role": "assistant",
+                    "content": new_content,
+                }
+            )
             draft.refinement_history = history
             draft.current_draft = new_content
             db.commit()
@@ -251,33 +267,33 @@ def _approve_draft_sync(draft_id: str):
         if draft and draft.status == "active":
             # Save original user message
             user_message = ChatMessage(
-                session_id=draft.session_id,
-                role="user",
-                content=draft.original_query
+                session_id=draft.session_id, role="user", content=draft.original_query
             )
             db.add(user_message)
-            
+
             # Save approved AI response
             assistant_message = ChatMessage(
                 session_id=draft.session_id,
                 role="assistant",
-                content=draft.current_draft
+                content=draft.current_draft,
             )
             db.add(assistant_message)
-            
+
             # Update session title if needed
             session = db.get(ChatSession, draft.session_id)
             if session and not session.title:
-                session.title = draft.original_query[:50] + ("..." if len(draft.original_query) > 50 else "")
-            
+                session.title = draft.original_query[:50] + (
+                    "..." if len(draft.original_query) > 50 else ""
+                )
+
             # Mark draft as approved
             draft.status = "approved"
             db.commit()
-            
+
             return {
                 "user_message_id": str(user_message.id),
                 "assistant_message_id": str(assistant_message.id),
-                "draft_id": str(draft.id)
+                "draft_id": str(draft.id),
             }
         return None
     finally:
@@ -308,7 +324,7 @@ def _refine_with_rag_sync(
     similarity_threshold: float = None,
 ):
     """Refine a draft using RAG to generate updated content.
-    
+
     Important Context:
     - There are TWO types of people in this workflow:
       1. End Customer (CHR): The person who asked the original question
@@ -321,12 +337,12 @@ def _refine_with_rag_sync(
         draft = db.get(DraftResponse, uuid.UUID(draft_id))
         if not draft or draft.status != "active":
             return None
-        
+
         rag_service = RAGService(db)
-        
+
         # Get chat history for context (previous customer-assistant exchanges)
         chat_history = _get_chat_history_sync(session_id, history_k)
-        
+
         result = rag_service.refine_draft(
             query_text=refinement_request,
             draft=draft,
@@ -336,7 +352,7 @@ def _refine_with_rag_sync(
             chat_history=chat_history,
             session_id=session_id,
         )
-        
+
         return result
     finally:
         db.close()
@@ -458,7 +474,7 @@ async def query_api(request: Request) -> JSONResponse:
         channel = (body.get("channel") or "email").lower()
         similarity_threshold = body.get("similarity_threshold")
         copilot_mode = body.get("copilot_mode", False)  # Co-pilot mode flag
-        
+
         logger.info(
             f"Query API request: query='{query_text[:50]}...', session_id={session_id}, top_k={top_k}, history_k={history_k}, channel={channel}, copilot_mode={copilot_mode}"
         )
@@ -485,14 +501,14 @@ async def query_api(request: Request) -> JSONResponse:
             sources_data = {
                 "sources": result.get("sources", []),
                 "kbs_used": result.get("kbs_used", []),
-                "chunks": result.get("chunks", [])
+                "chunks": result.get("chunks", []),
             }
             draft = await asyncio.to_thread(
                 _create_draft_sync,
                 session_id,
                 query_text,
                 result["answer"],
-                sources_data
+                sources_data,
             )
             result["draft_id"] = str(draft.id)
             result["is_draft"] = True
@@ -507,6 +523,7 @@ async def query_api(request: Request) -> JSONResponse:
             logger.info(f"Saved messages to session: {session_id}")
 
         logger.info(f"Query completed successfully")
+        logger.info(f"Result: {result}")
         return JSONResponse(result)
     except Exception as e:
         logger.error(f"Error processing query: {str(e)}", exc_info=True)
@@ -515,19 +532,24 @@ async def query_api(request: Request) -> JSONResponse:
 
 # ==================== Co-pilot Mode API Endpoints ====================
 
+
 async def toggle_copilot_mode(request: Request) -> JSONResponse:
     """Toggle co-pilot mode for a session."""
     session_id = request.path_params.get("session_id")
     if not session_id:
         return JSONResponse({"error": "Session ID required"}, status_code=400)
-    
+
     try:
         body = await request.json()
         enabled = body.get("enabled", False)
-        
-        success = await asyncio.to_thread(_toggle_copilot_mode_sync, session_id, enabled)
+
+        success = await asyncio.to_thread(
+            _toggle_copilot_mode_sync, session_id, enabled
+        )
         if success:
-            logger.info(f"Co-pilot mode {'enabled' if enabled else 'disabled'} for session: {session_id}")
+            logger.info(
+                f"Co-pilot mode {'enabled' if enabled else 'disabled'} for session: {session_id}"
+            )
             return JSONResponse({"success": True, "copilot_enabled": enabled})
         else:
             return JSONResponse({"error": "Session not found"}, status_code=404)
@@ -541,19 +563,21 @@ async def get_active_draft(request: Request) -> JSONResponse:
     session_id = request.path_params.get("session_id")
     if not session_id:
         return JSONResponse({"error": "Session ID required"}, status_code=400)
-    
+
     try:
         draft = await asyncio.to_thread(_get_active_draft_sync, session_id)
         if draft:
-            return JSONResponse({
-                "draft_id": str(draft.id),
-                "original_query": draft.original_query,
-                "current_draft": draft.current_draft,
-                "refinement_history": draft.refinement_history or [],
-                "sources_data": draft.sources_data or {},
-                "created_at": draft.created_at.isoformat(),
-                "updated_at": draft.updated_at.isoformat()
-            })
+            return JSONResponse(
+                {
+                    "draft_id": str(draft.id),
+                    "original_query": draft.original_query,
+                    "current_draft": draft.current_draft,
+                    "refinement_history": draft.refinement_history or [],
+                    "sources_data": draft.sources_data or {},
+                    "created_at": draft.created_at.isoformat(),
+                    "updated_at": draft.updated_at.isoformat(),
+                }
+            )
         else:
             return JSONResponse({"draft": None})
     except Exception as e:
@@ -566,7 +590,7 @@ async def refine_draft(request: Request) -> JSONResponse:
     draft_id = request.path_params.get("draft_id")
     if not draft_id:
         return JSONResponse({"error": "Draft ID required"}, status_code=400)
-    
+
     try:
         body = await request.json()
         refinement_request = body.get("refinement", "").strip()
@@ -575,10 +599,12 @@ async def refine_draft(request: Request) -> JSONResponse:
         history_k = body.get("history_k", 20)
         channel = (body.get("channel") or "email").lower()
         similarity_threshold = body.get("similarity_threshold")
-        
+
         if not refinement_request:
-            return JSONResponse({"error": "Refinement request is required"}, status_code=400)
-        
+            return JSONResponse(
+                {"error": "Refinement request is required"}, status_code=400
+            )
+
         # Use RAG to generate refined content
         result = await asyncio.to_thread(
             _refine_with_rag_sync,
@@ -588,32 +614,33 @@ async def refine_draft(request: Request) -> JSONResponse:
             session_id,
             history_k,
             channel,
-            similarity_threshold
+            similarity_threshold,
         )
-        
+
         if result is None:
-            return JSONResponse({"error": "Draft not found or not active"}, status_code=404)
-        
+            return JSONResponse(
+                {"error": "Draft not found or not active"}, status_code=404
+            )
+
         # Update the draft with refined content
         updated_draft = await asyncio.to_thread(
-            _refine_draft_sync,
-            draft_id,
-            refinement_request,
-            result["answer"]
+            _refine_draft_sync, draft_id, refinement_request, result["answer"]
         )
-        
+
         if updated_draft:
             logger.info(f"Refined draft: {draft_id}")
-            return JSONResponse({
-                "success": True,
-                "draft_id": str(updated_draft.id),
-                "current_draft": updated_draft.current_draft,
-                "refinement_history": updated_draft.refinement_history or [],
-                "answer": result["answer"],
-                "sources": result.get("sources", []),
-                "kbs_used": result.get("kbs_used", []),
-                "chunks": result.get("chunks", [])
-            })
+            return JSONResponse(
+                {
+                    "success": True,
+                    "draft_id": str(updated_draft.id),
+                    "current_draft": updated_draft.current_draft,
+                    "refinement_history": updated_draft.refinement_history or [],
+                    "answer": result["answer"],
+                    "sources": result.get("sources", []),
+                    "kbs_used": result.get("kbs_used", []),
+                    "chunks": result.get("chunks", []),
+                }
+            )
         else:
             return JSONResponse({"error": "Failed to update draft"}, status_code=500)
     except Exception as e:
@@ -626,17 +653,16 @@ async def approve_draft(request: Request) -> JSONResponse:
     draft_id = request.path_params.get("draft_id")
     if not draft_id:
         return JSONResponse({"error": "Draft ID required"}, status_code=400)
-    
+
     try:
         result = await asyncio.to_thread(_approve_draft_sync, draft_id)
         if result:
             logger.info(f"Approved draft: {draft_id}")
-            return JSONResponse({
-                "success": True,
-                **result
-            })
+            return JSONResponse({"success": True, **result})
         else:
-            return JSONResponse({"error": "Draft not found or not active"}, status_code=404)
+            return JSONResponse(
+                {"error": "Draft not found or not active"}, status_code=404
+            )
     except Exception as e:
         logger.error(f"Error approving draft: {str(e)}", exc_info=True)
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -647,14 +673,16 @@ async def discard_draft(request: Request) -> JSONResponse:
     draft_id = request.path_params.get("draft_id")
     if not draft_id:
         return JSONResponse({"error": "Draft ID required"}, status_code=400)
-    
+
     try:
         success = await asyncio.to_thread(_discard_draft_sync, draft_id)
         if success:
             logger.info(f"Discarded draft: {draft_id}")
             return JSONResponse({"success": True})
         else:
-            return JSONResponse({"error": "Draft not found or not active"}, status_code=404)
+            return JSONResponse(
+                {"error": "Draft not found or not active"}, status_code=404
+            )
     except Exception as e:
         logger.error(f"Error discarding draft: {str(e)}", exc_info=True)
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -668,7 +696,9 @@ chat_routes = [
     Route("/api/chat/sessions/{session_id}", delete_session, methods=["DELETE"]),
     Route("/api/query", query_api, methods=["POST"]),
     # Co-pilot mode routes
-    Route("/api/chat/sessions/{session_id}/copilot", toggle_copilot_mode, methods=["POST"]),
+    Route(
+        "/api/chat/sessions/{session_id}/copilot", toggle_copilot_mode, methods=["POST"]
+    ),
     Route("/api/chat/sessions/{session_id}/draft", get_active_draft, methods=["GET"]),
     Route("/api/draft/{draft_id}/refine", refine_draft, methods=["POST"]),
     Route("/api/draft/{draft_id}/approve", approve_draft, methods=["POST"]),
