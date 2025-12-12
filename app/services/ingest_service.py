@@ -456,10 +456,8 @@ class IngestService:
                         "kb_id": kb_id,
                     },
                 )
-                for doc in documents[:30]
+                for doc in documents
             ]
-            print(nodes, 'NODES')
-
             transformations = []
 
             # Add extractors if LLM is available
