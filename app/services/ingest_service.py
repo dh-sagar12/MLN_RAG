@@ -3,20 +3,16 @@
 import datetime
 import logging
 import asyncio
-from typing import List, Dict, Any, Optional
-from llama_index.core.schema import BaseNode
+from typing import List, Dict, Optional
+from llama_index.core.schema import  TextNode, BaseNode
 from sqlalchemy.orm import Session
 from sqlalchemy import select
-from llama_index.core import Document, Settings, SimpleDirectoryReader
+from llama_index.core import Document, Settings
 from llama_index.core.node_parser import (
     SentenceSplitter,
     MarkdownNodeParser,
 )
 from llama_index.core.ingestion import IngestionPipeline
-from llama_index.core.extractors import (
-    TitleExtractor,
-    QuestionsAnsweredExtractor,
-)
 from llama_index.embeddings.openai import OpenAIEmbedding
 from llama_index.llms.openai import OpenAI
 from app.config import settings
@@ -28,7 +24,8 @@ from app.models import (
 from app.services.file_service import FileService
 from app.services.config_service import ConfigService
 import uuid
-from app.services.extractor import IntentExtractor
+from app.services.extractor import ContextExtractor, IntentExtractor
+
 logger = logging.getLogger(__name__)
 
 
@@ -69,7 +66,7 @@ class IngestService:
                 llm_model = self.llm_config.get("model")
                 embedding_model = self.llm_config.get("embedding_model")
                 llm_temperature = self.llm_config.get("temperature")
-                
+
                 self.embed_model = OpenAIEmbedding(
                     model=embedding_model,
                     api_key=settings.openai_api_key,
@@ -93,7 +90,7 @@ class IngestService:
                 # Restore proxy environment variables
                 for var, value in saved_proxies.items():
                     os.environ[var] = value
-        
+
         # Initialize node parsers with dynamic configuration
         self._initialize_node_parsers()
 
@@ -107,29 +104,27 @@ class IngestService:
         #     questions=3,
         #     llm=self.llm,
         # )
-        
         self.intent_extractor = IntentExtractor(
-            llm=self.llm,
-            prompt=self.prompt_config.get("intent_detection")
+            llm=self.llm, prompt=self.prompt_config.get("intent_detection")
         )
 
     def _initialize_node_parsers(self):
         """Initialize node parsers with dynamic configuration."""
         # Reload config to get latest values
         self.ingestion_config = ConfigService.get_ingestion_config(self.db)
-        
+
         chunk_size = self.ingestion_config.get("chunk_size", 1024)
         chunk_overlap = self.ingestion_config.get("chunk_overlap", 200)
-        
+
         # Sentence splitter for regular documents
         self.node_parser = SentenceSplitter(
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
         )
-        
+
         # Markdown node parser
         self.markdown_node_parser = MarkdownNodeParser()
-        
+
         logger.info(
             f"Node parsers initialized: chunk_size={chunk_size}, chunk_overlap={chunk_overlap}"
         )
@@ -150,7 +145,7 @@ class IngestService:
     async def process_multiple_files(
         self,
         kb_id: uuid.UUID,
-        file_paths: List[str],
+        file_paths: List[UploadedFile],
     ) -> None:
         """Process multiple files using SimpleDirectoryReader.
 
@@ -161,65 +156,12 @@ class IngestService:
         logger.info(f"Processing {len(file_paths)} files for KB: {kb_id}")
 
         # Update status to PROCESSING
-        for path in file_paths:
-            await asyncio.to_thread(self._update_file_status, path, "PROCESSING")
-
-        try:
-            # Use SimpleDirectoryReader to load data
-            reader = SimpleDirectoryReader(input_files=file_paths)
-            documents = await asyncio.to_thread(reader.load_data)
-            
-            logger.info(f"Loaded {len(documents)} documents from {len(file_paths)} files")
-
-            # Update metadata
-            for doc in documents:
-                doc.metadata.update({
-                    "kb_id": str(kb_id),
-                    "source_type": "document_upload",
-                    "created_at": datetime.datetime.now(datetime.UTC).isoformat(),
-                })
-                # Ensure file_path is preserved (SimpleDirectoryReader puts it in metadata)
-                if "file_path" not in doc.metadata:
-                    # Fallback if needed, though SimpleDirectoryReader usually adds it
-                    pass
-
-            # Build pipeline - reload config to get latest chunk settings
-            self._initialize_node_parsers()
-            transformations = [self.node_parser]
-            if self.embed_model:
-                transformations.append(self.embed_model)
-            
-            if self.intent_extractor:
-                transformations.extend(
-                    [
-                        self.intent_extractor,
-                    ]
-                )
-
-
-            pipeline = IngestionPipeline(transformations=transformations)
-
-            logger.info("Running IngestionPipeline for batch...")
-            nodes = await pipeline.arun(documents=documents)
-            logger.info(f"Pipeline generated {len(nodes)} nodes with embeddings")
-
-            if nodes:
-                await self._save_nodes_to_db(nodes, kb_id)
-                # Update status to COMPLETED
-                for path in file_paths:
-                    await asyncio.to_thread(self._update_file_status, path, "COMPLETED")
-            else:
-                logger.warning("No nodes generated from batch")
-                # Should we mark as failed? Maybe not.
-                for path in file_paths:
-                    await asyncio.to_thread(self._update_file_status, path, "COMPLETED")
-
-        except Exception as e:
-            logger.error(f"Error processing batch: {str(e)}", exc_info=True)
-            # Update status to FAILED
-            for path in file_paths:
-                await asyncio.to_thread(self._update_file_status, path, "FAILED")
-            raise
+        for file in file_paths:
+            await self.process_file(
+                kb_id=kb_id,
+                file_path=file.file_path,
+                file_type=file.file_type,
+            )
 
     async def process_file(
         self,
@@ -256,7 +198,16 @@ class IngestService:
             )
 
             # Build and run pipeline
-            transformations = [self.node_parser]
+            transformations = [
+                self.node_parser,
+            ]
+            if self.ingestion_config.get("use_context_retrieval"):
+                contextual_transform = ContextExtractor(
+                    llm=self.llm,
+                    whole_document=text,
+                    concurrency_limit=5,
+                )
+                transformations.append(contextual_transform)
 
             # Add extractors if LLM is available
             if self.intent_extractor:
@@ -280,10 +231,14 @@ class IngestService:
             if nodes:
                 await self._save_nodes_to_db(nodes, kb_id)
                 logger.info(f"Successfully saved embeddings for file: {file_path}")
-                await asyncio.to_thread(self._update_file_status, file_path, "COMPLETED")
+                await asyncio.to_thread(
+                    self._update_file_status, file_path, "COMPLETED"
+                )
             else:
                 logger.warning("No nodes generated from pipeline")
-                await asyncio.to_thread(self._update_file_status, file_path, "COMPLETED")
+                await asyncio.to_thread(
+                    self._update_file_status, file_path, "COMPLETED"
+                )
 
         except Exception as e:
             logger.error(f"Error processing file {file_path}: {str(e)}", exc_info=True)
@@ -322,15 +277,25 @@ class IngestService:
 
             # Build and run pipeline
             # Use dynamic markdown parser selection
-            markdown_parser_type = self.ingestion_config.get("markdown_parser", "markdown")
+            markdown_parser_type = self.ingestion_config.get(
+                "markdown_parser", "markdown"
+            )
             if markdown_parser_type == "markdown":
                 # Use MarkdownNodeParser which preserves markdown structure
                 parser = self.markdown_node_parser
             else:
                 # Use SentenceSplitter for simple text splitting
                 parser = self.node_parser
-            
+
             transformations = [parser]
+
+            if self.ingestion_config.get("use_context_retrieval"):
+                contextual_transform = ContextExtractor(
+                    llm=self.llm,
+                    whole_document=markdown,
+                    concurrency_limit=5,
+                )
+                transformations.append(contextual_transform)
 
             # Add extractors if LLM is available
             # if self.llm:
@@ -417,7 +382,7 @@ class IngestService:
         # BUT `asyncio.to_thread` makes it concurrent.
         # If the caller waits for `process_file` to finish before doing anything else with `db`, it's "okay" but not great.
         # I'll stick to `self.db` to match original behavior but add a comment.
-        
+
         # NOTE: THE ANOTHER WAY TO SAVE VECTOR EMBEDDINGS IS TO USE THE VECTOR STORE AND PASS IT TO THE INGESTION PIPELINE. FOR THAT USE `PostgresRetriever` class AND ADD `add` method there. and pass instance of it to the pipeline
 
         try:
@@ -448,7 +413,9 @@ class IngestService:
         for idx, file in enumerate(files, 1):
             logger.info(f"Processing file {idx}/{len(files)}: {file.file_name}")
             try:
-                await self.process_file(kb_id=kb_id, file_path=file.file_path, file_type=file.file_type)
+                await self.process_file(
+                    kb_id=kb_id, file_path=file.file_path, file_type=file.file_type
+                )
                 logger.info(
                     f"Completed processing file {idx}/{len(files)}: {file.file_name}"
                 )
@@ -467,3 +434,57 @@ class IngestService:
             select(UploadedFile).where(UploadedFile.kb_id == kb_id)
         )
         return result.scalars().all()
+
+    async def process_email(
+        self,
+        kb_id: str,
+    ) -> None:
+        """Process email and create embeddings using IngestionPipeline."""
+        logger.info(f"Processing email for KB: {kb_id}")
+
+        from app.utils import get_documents_from_email
+
+        try:
+            documents : List[Document] = get_documents_from_email()
+            # Build and run pipeline
+
+            nodes : List[TextNode] = [
+                TextNode(
+                    text=doc.text,
+                    metadata={
+                        **doc.metadata,
+                        "kb_id": kb_id,
+                    },
+                )
+                for doc in documents[:30]
+            ]
+            print(nodes, 'NODES')
+
+            transformations = []
+
+            # Add extractors if LLM is available
+            if self.intent_extractor:
+                transformations.append(
+                    self.intent_extractor,
+                )
+            if self.embed_model:
+                transformations.append(self.embed_model)
+
+            pipeline = IngestionPipeline(
+                transformations=transformations,
+            )
+
+            logger.info("Running IngestionPipeline for file...")
+            nodes = await pipeline.arun(nodes=nodes)
+            logger.info(f"Pipeline generated {len(nodes)} nodes with embeddings")
+
+            # Save embeddings to database
+            if nodes:
+                await self._save_nodes_to_db(nodes, kb_id)
+                logger.info(f"Successfully saved embeddings for Email")
+            else:
+                logger.warning("No nodes generated from pipeline")
+
+        except Exception as e:
+            logger.error(f"Error processing email: {str(e)}", exc_info=True)
+            raise

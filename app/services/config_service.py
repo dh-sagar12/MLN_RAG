@@ -66,6 +66,12 @@ class ConfigService:
             "description": "Number of characters to overlap between consecutive chunks. Overlap helps maintain context across chunk boundaries. Typically 10-20% of chunk_size.",
             "category": "ingestion",
         },
+        "ingestion.use_context_retrieval": {
+            "value": True,
+            "type": "bool",
+            "description": "Enable context-based retrieval feature. When enabled, append context of chunk with respect to the document will be added on before every chunks.",
+            "category": "ingestion",
+        },
         "ingestion.markdown_parser": {
             "value": "markdown",
             "type": "string",
@@ -524,7 +530,22 @@ class ConfigService:
             "type": "string",
             "description": "Prompt for draft refinement. Used to refine the draft response based on the refinement request.",
             "category": "prompt",
-        }
+        },
+        "prompt.context_extraction": {
+            "value": """
+                <document>
+                {whole_document}
+                </document>
+                Here is the chunk we want to situate within the whole document
+                <chunk>
+                {chunk_content}
+                </chunk>
+                Please give a short concise context to situate this chunk within the overall document for the purposes of improving search retrieval of the chunk. Answer only with the succinct context and nothing else.
+            """,
+            "type": "string",
+            "description": "Prompt for context extraction. Used to extract the context of a chunk from the whole document.",
+            "category": "prompt",
+        },
     }
 
     @staticmethod
@@ -675,6 +696,7 @@ class ConfigService:
             ),
             "intent_detection": ConfigService.get_config(db, "prompt.intent_detection"),
             "refine_draft": ConfigService.get_config(db, "prompt.refine_draft"),
+            "context_extraction": ConfigService.get_config(db, "prompt.context_extraction"),
         }
 
     @staticmethod
@@ -687,5 +709,8 @@ class ConfigService:
             ),
             "markdown_parser": ConfigService.get_config(
                 db, "ingestion.markdown_parser", "markdown"
+            ),
+            "use_context_retrieval": ConfigService.get_config(
+                db, "ingestion.use_context_retrieval", True
             ),
         }

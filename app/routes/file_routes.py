@@ -49,7 +49,7 @@ def _save_file_record_sync(
         db.close()
 
 
-async def process_files_background(kb_id: uuid.UUID, file_paths: List[str]) -> None:
+async def process_files_background(kb_id: uuid.UUID, file_paths: List[UploadedFile]) -> None:
     """Background task to process multiple files."""
     logger.info(
         f"Starting background processing for {len(file_paths)} files (KB: {kb_id})"
@@ -113,7 +113,7 @@ async def upload_file(request: Request) -> RedirectResponse:
             )
 
             # Save database record
-            await asyncio.to_thread(
+            uploaded_file  = await asyncio.to_thread(
                 _save_file_record_sync,
                 kb.id,
                 file.filename,
@@ -122,7 +122,7 @@ async def upload_file(request: Request) -> RedirectResponse:
                 file_path,
             )
             logger.info(f"File record saved to database: {file.filename}")
-            saved_file_paths.append(file_path)
+            saved_file_paths.append(uploaded_file)
         except Exception as e:
             logger.error(f"Error saving file {file.filename}: {e}")
 
@@ -207,7 +207,32 @@ async def process_kb_background(kb_id: uuid.UUID) -> None:
         db.close()
 
 
+async def upload_emails(request: Request) -> JSONResponse:
+    """Upload emails to a knowledge base."""
+    kb_id = request.path_params.get("kb_id")
+    logger.info(f"Email upload requested for KB: {kb_id}")
+
+    if not kb_id:
+        logger.warning("No KB ID provided in upload request")
+        return JSONResponse({"error": "KB ID required"}, status_code=400)
+    
+    db = next(get_db())
+    try:
+        ingest_service = IngestService(db)
+        asyncio.create_task(ingest_service.process_email(kb_id=kb_id))
+        logger.info(f"Successfully processed email for KB: {kb_id}")
+    except Exception as e:
+        logger.error(f"Error processing email for KB: {kb_id}: {str(e)}", exc_info=True)
+        return JSONResponse({"error": str(e)}, status_code=500)
+    finally:
+        db.close()
+
+    return JSONResponse({"message": "Email processing started"})
+    
+
+
 file_routes = [
     Route("/kb/{kb_id}/upload", upload_file, methods=["POST"]),
     Route("/kb/{kb_id}/process", process_kb, methods=["POST"]),
+    Route("/kb/{kb_id}/upload-emails", upload_emails, methods=["GET"]),
 ]

@@ -88,13 +88,38 @@ class FileService:
             raise ValueError(f"Unsupported file type: {file_type}")
     
     async def _extract_pdf(self, file_path: str) -> str:
-        """Extract text from PDF."""
+        """
+        Extract clean text from PDF using PyMuPDF.
+        This avoids the broken word-by-word line issues seen in pypdf.
+        """
+        import fitz
         text_parts = []
-        with open(file_path, 'rb') as f:
-            pdf_reader = pypdf.PdfReader(f)
-            for page in pdf_reader.pages:
-                text_parts.append(page.extract_text())
-        return "\n".join(text_parts)
+        doc = fitz.open(file_path)
+
+        for page in doc:
+            # "text" mode preserves proper reading order & paragraphs
+            text = page.get_text("text")
+            if text:
+                text_parts.append(text)
+
+        full_text = "\n".join(text_parts)
+        return self._normalize_text(full_text)
+
+    def _normalize_text(self, text: str) -> str:
+        """
+        Optional light cleanup for PDFs with irregular spacing.
+        Removes excessive empty lines, trims spaces, formats well.
+        """
+        lines = [line.strip() for line in text.splitlines()]
+        cleaned = []
+
+        for line in lines:
+            # remove empty lines but keep paragraph breaks
+            if line:
+                cleaned.append(line)
+
+        return "\n".join(cleaned)
+
     
     async def _extract_docx(self, file_path: str) -> str:
         """Extract text from DOCX."""
