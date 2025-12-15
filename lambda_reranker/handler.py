@@ -17,6 +17,8 @@ Required layers or dependencies:
 
 import json
 import logging
+import os
+import shutil
 from typing import Any, Dict, List
 
 # Initialize logging
@@ -25,6 +27,44 @@ logger.setLevel(logging.INFO)
 
 # Global model cache to keep model warm between invocations
 _reranker_model = None
+
+# Model paths
+BUNDLED_MODEL_DIR = os.environ.get("BUNDLED_MODEL_DIR", "/var/task/models")
+RUNTIME_CACHE_DIR = "/tmp/huggingface"
+
+
+def setup_model_cache():
+    """Setup the model cache directory for Lambda runtime.
+    
+    Copies the bundled model from the read-only /var/task/models to
+    the writable /tmp directory if not already done.
+    """
+    # Ensure runtime cache directory exists
+    os.makedirs(RUNTIME_CACHE_DIR, exist_ok=True)
+    
+    # Set environment variables for Hugging Face
+    os.environ["HF_HOME"] = RUNTIME_CACHE_DIR
+    os.environ["TRANSFORMERS_CACHE"] = RUNTIME_CACHE_DIR
+    os.environ["SENTENCE_TRANSFORMERS_HOME"] = RUNTIME_CACHE_DIR
+    
+    # Check if we need to copy the bundled model
+    if os.path.exists(BUNDLED_MODEL_DIR) and os.listdir(BUNDLED_MODEL_DIR):
+        # Copy bundled model to writable /tmp if not already copied
+        hub_source = os.path.join(BUNDLED_MODEL_DIR, "hub")
+        hub_dest = os.path.join(RUNTIME_CACHE_DIR, "hub")
+        
+        if os.path.exists(hub_source) and not os.path.exists(hub_dest):
+            logger.info(f"Copying bundled model from {hub_source} to {hub_dest}...")
+            shutil.copytree(hub_source, hub_dest)
+            logger.info("Model cache copied successfully")
+        
+        # Also copy sentence_transformers cache if exists
+        st_source = os.path.join(BUNDLED_MODEL_DIR, "sentence_transformers")
+        st_dest = os.path.join(RUNTIME_CACHE_DIR, "sentence_transformers")
+        
+        if os.path.exists(st_source) and not os.path.exists(st_dest):
+            logger.info(f"Copying sentence_transformers cache...")
+            shutil.copytree(st_source, st_dest)
 
 
 def get_reranker_model():
@@ -36,6 +76,9 @@ def get_reranker_model():
     global _reranker_model
     
     if _reranker_model is None:
+        # Setup model cache on first load
+        setup_model_cache()
+        
         logger.info("Loading reranker model...")
         from sentence_transformers import CrossEncoder
         
@@ -100,12 +143,9 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         
         # Prepare query-document pairs for reranking
         pairs = [(query, doc["text"]) for doc in documents]
-        print("pairs------------>", pairs)
         
         # Get reranking scores
         scores = model.predict(pairs)
-        
-        print("scores------------>", scores)
         
         # Combine scores with original indices
         scored_docs: List[Dict[str, Any]] = []
@@ -128,4 +168,3 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"Error during reranking: {str(e)}", exc_info=True)
         return {"errorMessage": str(e)}
-
