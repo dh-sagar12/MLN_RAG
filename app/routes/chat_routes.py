@@ -523,7 +523,6 @@ async def query_api(request: Request) -> JSONResponse:
             logger.info(f"Saved messages to session: {session_id}")
 
         logger.info(f"Query completed successfully")
-        logger.info(f"Result: {result}")
         return JSONResponse(result)
     except Exception as e:
         logger.error(f"Error processing query: {str(e)}", exc_info=True)

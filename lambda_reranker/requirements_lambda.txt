@@ -1,0 +1,11 @@
+# Lambda function dependencies for reranker
+# These versions have pre-built wheels for Python 3.11 on Linux x86_64
+
+numpy==1.26.4
+scikit-learn==1.4.2
+sentence-transformers==2.6.1
+transformers==4.38.2
+huggingface-hub>=0.20.0
+tokenizers>=0.15.0
+tqdm
+

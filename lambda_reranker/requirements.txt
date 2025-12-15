@@ -1,0 +1,11 @@
+# Lambda function dependencies for reranker
+# Using specific versions with pre-built wheels for Lambda Python 3.11
+
+# Pin numpy and scikit-learn to versions with prebuilt wheels
+numpy==1.26.4
+scikit-learn==1.4.2
+
+# Core dependencies
+torch==2.1.2 --index-url https://download.pytorch.org/whl/cpu
+sentence-transformers==2.6.1
+transformers==4.38.2

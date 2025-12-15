@@ -11,6 +11,7 @@ asyncpg==0.31.0
 attrs==25.4.0
 banks==2.2.0
 beautifulsoup4==4.14.2
+boto3>=1.34.0
 brotli==1.2.0
 certifi==2025.11.12
 cffi==2.0.0
@@ -106,6 +107,7 @@ pydantic-settings==2.12.0
 pydantic_core==2.41.5
 pyee==13.0.0
 Pygments==2.19.2
+PyMuPDF==1.26.7
 pyOpenSSL==25.3.0
 pypdf==5.9.0
 python-dateutil==2.9.0.post0

@@ -27,7 +27,6 @@ from llama_index.core import (
     get_response_synthesizer,
 )
 from llama_index.core.llms import ChatMessage as LlamaChatMessage
-from llama_index.core.postprocessor import SentenceTransformerRerank
 from llama_index.core.query_engine import RetrieverQueryEngine
 from llama_index.core.response_synthesizers import BaseSynthesizer
 from llama_index.core.retrievers import BaseRetriever, QueryFusionRetriever
@@ -41,7 +40,7 @@ from app.models import DraftResponse
 from app.services.config_service import ConfigService
 from app.services.extractor import IntentMetadataFilter
 from app.services.performance_tracker import PerformanceTracker, get_performance_tracker
-from app.services.retriever import BM25Retriever, PostgresRetriever
+from app.services.retriever import BM25Retriever, LambdaReranker, PostgresRetriever
 
 if TYPE_CHECKING:
     from llama_index.core.base.response.schema import RESPONSE_TYPE
@@ -578,6 +577,9 @@ class RAGService:
     def _create_node_postprocessors(self, *, top_k: int) -> List[Any]:
         """Create node postprocessors for reranking.
 
+        Uses Lambda-based reranker to offload compute-intensive reranking
+        to a serverless function, reducing VPC resource requirements.
+
         Args:
             top_k: Number of top results to keep after reranking.
 
@@ -587,11 +589,28 @@ class RAGService:
         postprocessors = []
 
         if self.retriever_config["use_reranker"]:
-            reranker = SentenceTransformerRerank(
+            if not settings.lambda_reranker_function_name:
+                logger.warning(
+                    "Reranker enabled but lambda_reranker_function_name not configured. "
+                    "Skipping reranker. Set LAMBDA_RERANKER_FUNCTION_NAME in environment."
+                )
+                return postprocessors
+
+            reranker = LambdaReranker(
+                function_name=settings.lambda_reranker_function_name,
+                region_name=settings.lambda_reranker_region,
                 top_n=top_k,
-                model="BAAI/bge-reranker-large",
+                timeout=settings.lambda_reranker_timeout,
+                aws_access_key_id=settings.aws_access_key_id,
+                aws_secret_access_key=settings.aws_secret_access_key,
+                aws_session_token=settings.aws_session_token,
             )
             postprocessors.append(reranker)
+            logger.info(
+                f"Lambda reranker configured "
+                f"(function: {settings.lambda_reranker_function_name}, "
+                f"region: {settings.lambda_reranker_region})"
+            )
 
         return postprocessors
 

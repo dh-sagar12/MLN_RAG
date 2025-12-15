@@ -37,6 +37,16 @@ class Settings(BaseSettings):
     top_k: int = 5
 
     # ----------------------------------------------------------------------
+    # Lambda Reranker
+    # ----------------------------------------------------------------------
+    lambda_reranker_function_name: Optional[str] = None
+    lambda_reranker_region: str = "ap-south-1"
+    lambda_reranker_timeout: int = 60
+    aws_access_key_id: Optional[str] = None
+    aws_secret_access_key: Optional[str] = None
+    aws_session_token: Optional[str] = None
+
+    # ----------------------------------------------------------------------
     # Performance Tracking
     # ----------------------------------------------------------------------
     performance_tracking_enabled: bool = True
