@@ -27,13 +27,13 @@ from llama_index.core import (
     get_response_synthesizer,
 )
 from llama_index.core.llms import ChatMessage as LlamaChatMessage
-from llama_index.core.postprocessor import SentenceTransformerRerank
 from llama_index.core.query_engine import RetrieverQueryEngine
 from llama_index.core.response_synthesizers import BaseSynthesizer
 from llama_index.core.retrievers import BaseRetriever, QueryFusionRetriever
 from llama_index.core.vector_stores.types import MetadataFilters
 from llama_index.embeddings.openai import OpenAIEmbedding
 from llama_index.llms.openai import OpenAI
+from llama_index.postprocessor.cohere_rerank import CohereRerank
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -574,6 +574,18 @@ class RAGService:
             text_qa_template=qa_template,
             response_mode=response_mode,
         )
+        
+    def _get_reranker_model(self, top_k: int) -> CohereRerank:
+        """Get the reranker model.
+
+        Returns:
+            Configured reranker model.
+        """
+        return CohereRerank(
+            top_n=top_k,
+            api_key=settings.cohere_api_key,
+            model="rerank-english-v3.0",
+        )
 
     def _create_node_postprocessors(self, *, top_k: int) -> List[Any]:
         """Create node postprocessors for reranking.
@@ -587,10 +599,7 @@ class RAGService:
         postprocessors = []
 
         if self.retriever_config["use_reranker"]:
-            reranker = SentenceTransformerRerank(
-                top_n=top_k,
-                model="BAAI/bge-reranker-large",
-            )
+            reranker = self._get_reranker_model(top_k=top_k)
             postprocessors.append(reranker)
 
         return postprocessors

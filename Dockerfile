@@ -69,10 +69,10 @@ COPY requirements.txt .
 #     nvidia-nvtx-cu12
 # ----------------------------------------------------------------------
 
-# Install CPU-only PyTorch instead of GPU build
-RUN pip install --no-cache-dir \
-    torch==2.9.1+cpu \
-    --index-url https://download.pytorch.org/whl/cpu
+# Install CPU-only PyTorch instead of GPU build(Nop Need For Now)
+# RUN pip install --no-cache-dir \
+#     torch==2.9.1+cpu \
+#     --index-url https://download.pytorch.org/whl/cpu
 
 # Install remaining deps
 RUN pip install --no-cache-dir -r requirements.txt
