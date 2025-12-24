@@ -186,6 +186,36 @@ class RAGService:
         self._initialize_performance_tracker()
         self._initialize_openai_clients()
 
+    @staticmethod
+    def _build_draft_retrieval_hint(draft_text: str, *, max_chars: int = 900) -> str:
+        """Build a compact retrieval hint from the current draft.
+
+        Goal: keep retrieval grounded in previously-covered topics during refinement,
+        without embedding the entire draft (which can be noisy and large).
+        """
+        if not draft_text:
+            return ""
+
+        lines = [ln.strip() for ln in draft_text.splitlines() if ln.strip()]
+        kept: List[str] = []
+
+        for ln in lines:
+            # Prefer structure cues (headers/bullets/short lines)
+            is_structured = (
+                ln.startswith(("#", "-", "*"))
+                or ln.startswith("**")
+                or ln.lower().startswith(("day ", "itinerary", "weather", "food"))
+            )
+            if is_structured or len(ln) <= 140:
+                kept.append(ln)
+
+            # Stop once we have enough material
+            if sum(len(x) + 1 for x in kept) >= max_chars:
+                break
+
+        hint = " | ".join(kept)
+        return hint[:max_chars].strip()
+
     # ========================================================================
     # Initialization Methods
     # ========================================================================
@@ -440,24 +470,15 @@ class RAGService:
                 )
 
         # Add context and query messages
-        developer_or_user = "developer" if draft_mode else "user"
         messages.extend(
             [
                 LlamaChatMessage(
-                    role="user",
+                    role="developer",
                     content="Context:\n---------------------\n{context_str}\n---------------------",
-                ),
-                LlamaChatMessage(
-                    role=developer_or_user,
-                    content=f"Original Query:\n-------------------\n{original_query}\n-------------------",
                 ),
                 LlamaChatMessage(
                     role="developer",
                     content=f"Intents: {intents}",
-                ),
-                LlamaChatMessage(
-                    role=developer_or_user,
-                    content="Answer the query strictly based on the above context.\n Enhanced Query: {query_str}\n",
                 ),
             ]
         )
@@ -819,6 +840,8 @@ class RAGService:
         similarity_threshold: Optional[float] = None,
         session_id: Optional[str] = None,
         draft_mode: bool = False,
+        draft_customer_query: Optional[str] = None,
+        draft_current_draft: Optional[str] = None,
     ) -> QueryResult:
         """Query across all knowledge bases.
 
@@ -866,6 +889,8 @@ class RAGService:
                 similarity_threshold=similarity_threshold,
                 session_id=session_id,
                 draft_mode=draft_mode,
+                draft_customer_query=draft_customer_query,
+                draft_current_draft=draft_current_draft,
                 request_id=request_id,
             )
 
@@ -890,6 +915,8 @@ class RAGService:
         similarity_threshold: float,
         session_id: Optional[str],
         draft_mode: bool,
+        draft_customer_query: Optional[str],
+        draft_current_draft: Optional[str],
         request_id: Optional[str],
     ) -> QueryResult:
         """Execute the query pipeline.
@@ -927,7 +954,31 @@ class RAGService:
             draft_mode=draft_mode,
         )
         enhanced_query = enhancement_result["enhanced_query"]
-        intents = enhancement_result["intents"]
+        intents: List[str] = enhancement_result["intents"]
+
+        # In draft refinement, also embed the original customer query so retrieval
+        # doesn't collapse to only the latest refinement request.
+        enhanced_queries: List[str] = [enhanced_query]
+        if draft_mode and draft_customer_query:
+            customer_enhancement_result = self._get_enhanced_query_and_intents(
+                query_text=draft_customer_query,
+                chat_history=chat_history,
+                draft_mode=False,
+            )
+            customer_enhanced_query = customer_enhancement_result["enhanced_query"]
+            if customer_enhanced_query and customer_enhanced_query not in enhanced_queries:
+                enhanced_queries.append(customer_enhanced_query)
+
+            # Merge intents to avoid over-filtering retrieval during refinement.
+            customer_intents = customer_enhancement_result.get("intents", [])
+            intents = list(dict.fromkeys([*intents, *customer_intents]))
+
+        # Also embed a compact hint derived from the current draft so retrieval
+        # continues to pull context for previously-covered topics.
+        # if draft_mode and draft_current_draft:
+            # draft_hint = self._build_draft_retrieval_hint(draft_current_draft)
+            # if draft_hint and draft_hint not in enhanced_queries:
+            #     enhanced_queries.append(draft_hint)
         enhancement_time_ms = (time.perf_counter() - enhancement_start) * 1000
 
         logger.info(f"Enhanced query: {enhanced_query}")
@@ -987,8 +1038,8 @@ class RAGService:
         llm_start = time.perf_counter()
         response = query_engine.query(
             str_or_query_bundle=QueryBundle(
-                query_str=query_text,
-                custom_embedding_strs=[enhanced_query],
+                query_str=enhanced_query,
+                custom_embedding_strs=enhanced_queries,
             )
         )
         llm_time_ms = (time.perf_counter() - llm_start) * 1000
@@ -1100,13 +1151,13 @@ class RAGService:
         chat_history: Optional[List[Dict[str, str]]] = None,
         session_id: Optional[str] = None,
     ) -> QueryResult:
-        """Refine a draft response based on user feedback.
+        """Refine a draft response based on developer feedback.
 
         This method prepares the draft context and refinement history,
         then executes a query in draft mode to generate an improved response.
 
         Args:
-            query_text: The refinement request/feedback from user.
+            query_text: The refinement request/feedback from developer.
             draft: The DraftResponse object containing current draft and history.
             top_k: Number of chunks to retrieve.
             channel: Output channel style (email or whatsapp).
@@ -1129,6 +1180,8 @@ class RAGService:
             similarity_threshold=similarity_threshold,
             session_id=session_id,
             draft_mode=True,
+            draft_customer_query=draft.original_query,
+            draft_current_draft=draft.current_draft,
         )
 
     def _setup_draft_refinement_context(
@@ -1169,7 +1222,12 @@ class RAGService:
             enhancement_history.append(
                 LlamaChatMessage(
                     role="assistant",
-                    content=draft.current_draft,
+                    content=(
+                        "CURRENT DRAFT (baseline; preserve by default):\n"
+                        "-------------------\n"
+                        f"{draft.current_draft}\n"
+                        "-------------------"
+                    ),
                 )
             )
 
@@ -1179,7 +1237,7 @@ class RAGService:
                 LlamaChatMessage(
                     role="user",
                     content=(
-                        f"Original Query From user:\n-------------------\n"
+                        f"END CUSTOMER ORIGINAL QUERY:\n-------------------\n"
                         f"{draft.original_query}\n-------------------"
                     ),
                 )

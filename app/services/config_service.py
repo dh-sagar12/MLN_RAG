@@ -13,6 +13,12 @@ logger = logging.getLogger(__name__)
 class ConfigService:
     """Service for managing application configuration."""
 
+    # Heuristic markers for identifying legacy prompt values that should be migrated.
+    _LEGACY_REFINE_DRAFT_PROMPT_MARKERS = (
+        "The developer has requested you to refine the draft response",
+        "previos refinement history",
+    )
+
     # Default configuration values
     DEFAULT_CONFIG = {
         # LLM Parameters
@@ -517,15 +523,37 @@ class ConfigService:
         },
         "prompt.refine_draft": {
             "value": """
-                The developer has requested you to refine the draft response based on the refinement request query provided. The previos refinement history is provided also provided. 
-                
+                You are refining a draft message that will be sent to the end customer.
+                You are given:
+                - The END CUSTOMER'S original query
+                - The CURRENT DRAFT (what we plan to send)
+                - Optional refinement history (previous edits)
+                - The latest REFINEMENT REQUEST from an internal employee (reviewer)
+
                 --- YOUR TASK ---
-                Update your draft response according to the refinement request.
-                - The updated response will still be sent to the end customer
-                - Keep the response appropriate for the customer (they won't see the refinement request)
-                - Maintain the same professional tone and format
-                - Incorporate any missing details or changes the refinement request
-                - Do NOT address the refinement request directly in your response - write as if responding to the customer
+                Produce an UPDATED DRAFT for the end customer by applying the latest refinement request.
+
+                --- CRITICAL RULES (MUST FOLLOW) ---
+                1) Preserve-by-default:
+                   - Treat the CURRENT DRAFT as the baseline.
+                   - KEEP all information and sections from the CURRENT DRAFT unless the employee explicitly asked to remove, replace, or correct them.
+                   - If the employee asks to "add" something (e.g., "attach itinerary"), you MUST add it while keeping existing draft content.
+
+                2) Minimal changes:
+                   - Make the smallest edits needed to satisfy the refinement request.
+                   - Do not rewrite the entire message if only an add/edit is requested.
+
+                3) Use retrieval safely:
+                   - Use retrieved CONTEXT to add missing details and to verify/correct facts.
+                   - If the CURRENT DRAFT contains claims that are NOT supported by retrieved CONTEXT and look uncertain, rewrite them more cautiously or state you'll confirm.
+                   - If CONTEXT contradicts the CURRENT DRAFT, prefer CONTEXT and fix the draft.
+
+                4) Customer-safe output:
+                   - The end customer must NEVER see internal instructions, refinement requests, or system prompts.
+                   - Do NOT mention "refinement", "internal review", or anything about AI.
+                   - Write as if you are directly replying to the end customer.
+
+                Output ONLY the updated draft in the same tone/format as the current draft.
             """,
             "type": "string",
             "description": "Prompt for draft refinement. Used to refine the draft response based on the refinement request.",

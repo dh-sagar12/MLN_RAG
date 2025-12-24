@@ -340,8 +340,12 @@ def _refine_with_rag_sync(
 
         rag_service = RAGService(db)
 
+        # Session ID is required for chat history.
+        # If the caller didn't provide it, fall back to the draft's session.
+        effective_session_id = session_id or str(draft.session_id)
+
         # Get chat history for context (previous customer-assistant exchanges)
-        chat_history = _get_chat_history_sync(session_id, history_k)
+        chat_history = _get_chat_history_sync(effective_session_id, history_k)
 
         result = rag_service.refine_draft(
             query_text=refinement_request,
@@ -350,7 +354,7 @@ def _refine_with_rag_sync(
             channel=channel,
             similarity_threshold=similarity_threshold,
             chat_history=chat_history,
-            session_id=session_id,
+            session_id=effective_session_id,
         )
 
         return result
