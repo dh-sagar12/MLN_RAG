@@ -43,121 +43,118 @@ class PostgresRetriever(BaseRetriever):
         super().__init__()
 
     def _retrieve(self, query_bundle: QueryBundle) -> List[NodeWithScore]:
-        """Retrieve nodes given a query."""
-        query_text = query_bundle.custom_embedding_strs[0] #for now we are using only one string for embedding.
         retrieval_start = time.perf_counter()
 
-        # Embed query with timing
-        embedding_start = time.perf_counter()
-        query_embedding = self.embed_model.get_text_embedding(text=query_text)
-        embedding_time_ms = (time.perf_counter() - embedding_start) * 1000
-
-        # PERFORMANCE TRACKING: Record embedding generation
-        if self.performance_tracker and self.request_id:
-            self.performance_tracker._record_timing(
-                self.request_id, "embedding_generation", embedding_time_ms
-            )
-            # Add embedding metadata
-            self.performance_tracker.add_metadata(
-                self.request_id, "embedding_dimension", len(query_embedding)
-            )
-
-        query_vector = list(query_embedding)
-        vector_str = "[" + ",".join(map(str, query_vector)) + "]"
-
-        # SQL for cosine similarity with timing
-        vector_search_start = time.perf_counter()
+        query_texts = query_bundle.custom_embedding_strs
+        if not query_texts:
+            return []
 
         metadata_sql, metadata_params = self._build_metadata_filter_sql()
-        sql = text(
-            f"""
-            SET hnsw.ef_search = :ef_search;
-            SELECT 
-                e.id,
-                e.kb_id,
-                e.chunk_text,
-                e.chunk_metadata,
-                kb.name as kb_name,
-                1 - (e.embedding <=> cast(:query_vector AS vector)) as similarity
-            FROM embeddings e
-            JOIN knowledge_bases kb ON e.kb_id = kb.id
-            WHERE 1 - (e.embedding <=> cast(:query_vector AS vector)) > :similarity_threshold 
-            {metadata_sql}
-            ORDER BY e.embedding <=> cast(:query_vector AS vector)
-            LIMIT :top_k
-        """
-        )  # NOTE: change similarity threshold later to required
 
-        result = self.db.execute(
-            sql,
-            {
-                "query_vector": vector_str,
-                "top_k": self.top_k,
-                "similarity_threshold": self.similarity_threshold,
-                "ef_search": self.ef_search,
-                **metadata_params,
-            }
-        )
-        rows = result.fetchall()
-        
-        compiled = sql.compile(
-            dialect=self.db.bind.dialect,
-            compile_kwargs={"literal_binds": True},
-        )
-        # print(f"Actual SQL:\n{str(compiled)}")
+        merged_results: dict[str, NodeWithScore] = {}
 
-        logger.info(
-            f"Vector search retrieved {len(rows)} nodes with similarity threshold {self.similarity_threshold}"
+        embedding_start = time.perf_counter()
+        query_embeddings = self.embed_model.get_text_embedding_batch(
+            texts=query_texts,
         )
 
-        # PERFORMANCE TRACKING: Record vector search and retrieval total
-        vector_search_time_ms = (time.perf_counter() - vector_search_start) * 1000
-        retrieval_total_time_ms = (time.perf_counter() - retrieval_start) * 1000
+        embedding_time_ms = (time.perf_counter() - embedding_start) * 1000
         if self.performance_tracker and self.request_id:
             self.performance_tracker._record_timing(
-                self.request_id, "vector_search", vector_search_time_ms
-            )
-            self.performance_tracker._record_timing(
-                self.request_id, "retrieval_total", retrieval_total_time_ms
-            )
-            # Add search metadata
-            self.performance_tracker.add_metadata(
-                self.request_id, key="hnsw_ef_search", value=self.ef_search
-            )
-            self.performance_tracker.add_metadata(
-                self.request_id, key="rows_returned", value=len(rows)
-            )
-            self.performance_tracker.add_metadata(
-                self.request_id, key="metadata_filters", value=self.metadata_filters
+                self.request_id,
+                "embedding_generation",
+                embedding_time_ms,
             )
 
-        nodes = []
-        for row in rows:
-            # Create TextNode
-            node = TextNode(
-                text=row.chunk_text,
-                metadata={
-                    "kb_id": str(row.kb_id),
-                    "kb_name": row.kb_name,
-                    "embedding_id": str(row.id),  # Add embedding ID for tracking
-                    **(row.chunk_metadata or {}),
+        for query_embedding in query_embeddings:
+
+            vector_str = "[" + ",".join(map(str, query_embedding)) + "]"
+
+            # 2. Vector search for this query
+            sql = text(
+                f"""
+                SET hnsw.ef_search = :ef_search;
+                SELECT 
+                    e.id,
+                    e.kb_id,
+                    e.chunk_text,
+                    e.chunk_metadata,
+                    kb.name as kb_name,
+                    1 - (e.embedding <=> cast(:query_vector AS vector)) as similarity
+                FROM embeddings e
+                JOIN knowledge_bases kb ON e.kb_id = kb.id
+                WHERE 1 - (e.embedding <=> cast(:query_vector AS vector)) > :similarity_threshold 
+                {metadata_sql}
+                ORDER BY e.embedding <=> cast(:query_vector AS vector)
+                LIMIT :top_k
+            """,
+            )
+
+            result = self.db.execute(
+                sql,
+                {
+                    "query_vector": vector_str,
+                    "top_k": self.top_k,
+                    "similarity_threshold": self.similarity_threshold,
+                    "ef_search": self.ef_search,
+                    **metadata_params,
                 },
             )
-            nodes.append(
-                NodeWithScore(
-                    node=node,
-                    score=float(row.similarity),
-                ),
+
+            rows = result.fetchall()
+
+            # 3. Merge results (keep best score per chunk)
+            for row in rows:
+                embedding_id = str(row.id)
+                score = float(row.similarity)
+
+                if (
+                    embedding_id not in merged_results
+                    or score > merged_results[embedding_id].score
+                ):
+                    node = TextNode(
+                        text=row.chunk_text,
+                        metadata={
+                            "kb_id": str(row.kb_id),
+                            "kb_name": row.kb_name,
+                            "embedding_id": embedding_id,
+                            **(row.chunk_metadata or {}),
+                        },
+                    )
+                    merged_results[embedding_id] = NodeWithScore(
+                        node=node,
+                        score=score,
+                    )
+
+        # 4. Final ranking
+        final_nodes = sorted(
+            merged_results.values(),
+            key=lambda n: n.score,
+            reverse=True,
+        )[: self.top_k]
+        
+        # print(final_nodes, 'final nodes')
+
+        retrieval_total_time_ms = (time.perf_counter() - retrieval_start) * 1000
+
+        if self.performance_tracker and self.request_id:
+            self.performance_tracker._record_timing(
+                self.request_id,
+                "retrieval_total",
+                retrieval_total_time_ms,
+            )
+            self.performance_tracker.add_metadata(
+                self.request_id,
+                "queries_processed",
+                len(query_texts),
+            )
+            self.performance_tracker.add_metadata(
+                self.request_id,
+                "final_nodes",
+                len(final_nodes),
             )
 
-        logger.debug(
-            f"Retrieval completed - Embedding: {embedding_time_ms:.2f}ms, "
-            f"Vector Search: {vector_search_time_ms:.2f}ms, "
-            f"Total: {retrieval_total_time_ms:.2f}ms, "
-            f"Rows: {len(rows)}"
-        )
-
-        return nodes
+        return final_nodes
 
     def _build_metadata_filter_sql(self):
         """
@@ -206,8 +203,7 @@ class PostgresRetriever(BaseRetriever):
                 )
                 params[f"mf_key_{idx}"] = key
                 params[param_key] = f.value  # must be a Python list
-                
-        
+
         logger.info(f"Metdata Filter Conditions: {conditions}")
         logger.info(f"Metdata Filter Parameters: {params}")
 

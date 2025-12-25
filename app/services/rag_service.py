@@ -319,6 +319,8 @@ class RAGService:
             chat_history=chat_history,
             draft_mode=draft_mode,
         )
+        
+        logger.info(f"Query enhancement messages: {messages}")
 
         response = self.llm.chat(messages)
         logger.debug(f"Query enhancement response: {response.message.content}")
@@ -353,7 +355,13 @@ class RAGService:
         ]
 
         # Add chat history context
-        if chat_history:
+        if chat_history and len(chat_history) > 0:
+            messages.append(
+                LlamaChatMessage(
+                    role="developer",
+                    content="Chat Histories (previous chats with the end customer):\n-------------------\n",
+                )
+            )
             for msg in chat_history:
                 messages.append(
                     LlamaChatMessage(
@@ -363,7 +371,7 @@ class RAGService:
                 )
 
         # Add draft mode context if applicable
-        if draft_mode and self._draft_mode_prompt_template:
+        if draft_mode and self._enhancement_draft_history:
             messages.extend(self._enhancement_draft_history or [])
 
         # Add the current query
@@ -460,7 +468,13 @@ class RAGService:
             messages.extend(self._draft_mode_prompt_template)
 
         # Add chat history
-        if chat_history:
+        if chat_history and len(chat_history) > 0:
+            messages.append(
+                LlamaChatMessage(
+                    role="developer",
+                    content="Chat Histories (previous chats with the end customer):\n-------------------\n",
+                )
+            )
             for msg in chat_history:
                 messages.append(
                     LlamaChatMessage(
@@ -474,7 +488,7 @@ class RAGService:
             [
                 LlamaChatMessage(
                     role="developer",
-                    content="Context:\n---------------------\n{context_str}\n---------------------",
+                    content="Context (retrieved context from the knowledge bases):\n---------------------\n{context_str}\n---------------------",
                 ),
                 LlamaChatMessage(
                     role="developer",
@@ -954,24 +968,26 @@ class RAGService:
             draft_mode=draft_mode,
         )
         enhanced_query = enhancement_result["enhanced_query"]
+        print(enhanced_query, 'enhanced query')
         intents: List[str] = enhancement_result["intents"]
 
         # In draft refinement, also embed the original customer query so retrieval
         # doesn't collapse to only the latest refinement request.
-        enhanced_queries: List[str] = [enhanced_query]
-        if draft_mode and draft_customer_query:
-            customer_enhancement_result = self._get_enhanced_query_and_intents(
-                query_text=draft_customer_query,
-                chat_history=chat_history,
-                draft_mode=False,
-            )
-            customer_enhanced_query = customer_enhancement_result["enhanced_query"]
-            if customer_enhanced_query and customer_enhanced_query not in enhanced_queries:
-                enhanced_queries.append(customer_enhanced_query)
+        enhanced_queries: List[str] = enhanced_query
+        # if draft_mode and draft_customer_query:
+        #     logger.info(f"Draft customer query: {draft_customer_query}")
+        #     customer_enhancement_result = self._get_enhanced_query_and_intents(
+        #         query_text=draft_customer_query,
+        #         chat_history=chat_history,
+        #         draft_mode=False,
+        #     )
+        #     customer_enhanced_query = customer_enhancement_result["enhanced_query"]
+        #     if customer_enhanced_query and customer_enhanced_query not in enhanced_queries:
+        #         enhanced_queries.extend(customer_enhanced_query)
 
-            # Merge intents to avoid over-filtering retrieval during refinement.
-            customer_intents = customer_enhancement_result.get("intents", [])
-            intents = list(dict.fromkeys([*intents, *customer_intents]))
+        #     # Merge intents to avoid over-filtering retrieval during refinement.
+        #     customer_intents = customer_enhancement_result.get("intents", [])
+        #     intents = list(dict.fromkeys([*intents, *customer_intents]))
 
         # Also embed a compact hint derived from the current draft so retrieval
         # continues to pull context for previously-covered topics.
@@ -981,7 +997,7 @@ class RAGService:
             #     enhanced_queries.append(draft_hint)
         enhancement_time_ms = (time.perf_counter() - enhancement_start) * 1000
 
-        logger.info(f"Enhanced query: {enhanced_query}")
+        logger.info(f"Enhanced query: {enhanced_queries}")
         self._track_timing(
             request_id=request_id,
             metric_name="query_enhancement",
@@ -990,7 +1006,7 @@ class RAGService:
         self._track_query_metrics(
             request_id=request_id,
             original_query=query_text,
-            enhanced_query=enhanced_query,
+            enhanced_query=','.join(enhanced_queries),
             channel=channel,
             chat_history_length=len(chat_history) if chat_history else 0,
         )
@@ -1036,9 +1052,14 @@ class RAGService:
 
         # Step 5: Execute query
         llm_start = time.perf_counter()
+        if draft_mode:
+            final_query_text  =  f"DEVELOPER REQUEST: {query_text}"
+        else:
+            final_query_text  =  query_text
+
         response = query_engine.query(
             str_or_query_bundle=QueryBundle(
-                query_str=enhanced_query,
+                query_str=final_query_text,
                 custom_embedding_strs=enhanced_queries,
             )
         )
@@ -1209,6 +1230,12 @@ class RAGService:
         enhancement_history: List[LlamaChatMessage] = []
 
         if draft.refinement_history:
+            enhancement_history.append(
+                LlamaChatMessage(
+                    role="developer",
+                    content="Refinement History:\n-------------------\n",
+                )
+            )
             for item in draft.refinement_history:
                 enhancement_history.append(
                     LlamaChatMessage(
@@ -1223,10 +1250,7 @@ class RAGService:
                 LlamaChatMessage(
                     role="assistant",
                     content=(
-                        "CURRENT DRAFT (baseline; preserve by default):\n"
-                        "-------------------\n"
-                        f"{draft.current_draft}\n"
-                        "-------------------"
+                        f"CURRENT DRAFT RESPONSE: {draft.current_draft}\n"
                     ),
                 )
             )
@@ -1237,15 +1261,17 @@ class RAGService:
                 LlamaChatMessage(
                     role="user",
                     content=(
-                        f"END CUSTOMER ORIGINAL QUERY:\n-------------------\n"
-                        f"{draft.original_query}\n-------------------"
+                        f"END CUSTOMER'S ORIGINAL QUERY: {draft.original_query}\n"
                     ),
                 )
             )
 
         # Combine messages and set state
         messages.extend(enhancement_history)
+        # used in query enhancement
         self._enhancement_draft_history = enhancement_history
+
+        # used in response generation
         self._draft_mode_prompt_template = messages
 
     def clear_draft_context(self) -> None:

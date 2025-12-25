@@ -116,7 +116,9 @@
                                             <option value="markdown" {% if config.value == 'markdown' %}selected{% endif %}>Markdown Node Parser (preserves structure)</option>
                                             <option value="sentence" {% if config.value == 'sentence' %}selected{% endif %}>Sentence Splitter (simple text splitting)</option>
                                         {% elif config.key == 'llm.model' %}
-                                            <option value="gpt-4o" {% if config.value == 'gpt-4o' %}selected{% endif %}>GPT-4o (Most Capable)</option>
+                                            <option value="gpt-5-mini" {% if config.value == 'gpt-5-mini' %}selected{% endif %}>GPT-5 Mini (Reasoning)</option>
+                                            <option value="gpt-5" {% if config.value == 'gpt-5' %}selected{% endif %}>GPT-5 (Most Capable)</option>
+                                            <option value="gpt-4o" {% if config.value == 'gpt-4o' %}selected{% endif %}>GPT-4o</option>
                                             <option value="gpt-4o-mini" {% if config.value == 'gpt-4o-mini' %}selected{% endif %}>GPT-4o Mini (Fast & Affordable)</option>
                                             <option value="gpt-4-turbo" {% if config.value == 'gpt-4-turbo' %}selected{% endif %}>GPT-4 Turbo</option>
                                             <option value="gpt-4" {% if config.value == 'gpt-4' %}selected{% endif %}>GPT-4</option>

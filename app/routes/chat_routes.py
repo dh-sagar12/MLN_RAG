@@ -129,6 +129,8 @@ def _query_with_history_sync(
         chat_history = None
         if session_id:
             chat_history = _get_chat_history_sync(session_id, history_k)
+        
+        print(f"query_text: {query_text}")
         result = rag_service.query(
             query_text=query_text,
             top_k=top_k,
