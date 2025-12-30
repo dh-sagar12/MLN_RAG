@@ -124,8 +124,16 @@ class FileService:
     async def _extract_docx(self, file_path: str) -> str:
         """Extract text from DOCX."""
         doc = DocxDocument(file_path)
-        paragraphs = [para.text for para in doc.paragraphs]
-        return "\n".join(paragraphs)
+        text_parts = [para.text for para in doc.paragraphs if para.text]
+
+        # Include table contents (rows separated by newlines, cells by tabs)
+        for table in doc.tables:
+            for row in table.rows:
+                cell_text = [cell.text.strip() for cell in row.cells if cell.text.strip()]
+                if cell_text:
+                    text_parts.append("\t".join(cell_text))
+
+        return "\n".join(text_parts)
     
     async def _extract_pptx(self, file_path: str) -> str:
         """Extract text from PPTX."""
