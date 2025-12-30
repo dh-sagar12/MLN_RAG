@@ -131,7 +131,7 @@ class PostgresRetriever(BaseRetriever):
             merged_results.values(),
             key=lambda n: n.score,
             reverse=True,
-        )[: self.top_k]
+        )
         
         # print(final_nodes, 'final nodes')
 

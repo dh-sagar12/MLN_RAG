@@ -442,6 +442,7 @@ class RAGService:
         original_query: str,
         intents: List[str],
         draft_mode: bool,
+        enhanced_queries: List[str],
     ) -> ChatPromptTemplate:
         """Build the QA prompt template for response generation.
 
@@ -471,7 +472,7 @@ class RAGService:
         if chat_history and len(chat_history) > 0:
             messages.append(
                 LlamaChatMessage(
-                    role="developer",
+                    role="user",
                     content="Chat Histories (previous chats with the end customer):\n-------------------\n",
                 )
             )
@@ -487,12 +488,16 @@ class RAGService:
         messages.extend(
             [
                 LlamaChatMessage(
-                    role="developer",
+                    role="user",
                     content="Context (retrieved context from the knowledge bases):\n---------------------\n{context_str}\n---------------------",
                 ),
                 LlamaChatMessage(
-                    role="developer",
+                    role="user",
                     content=f"Intents: {intents}",
+                ),
+                LlamaChatMessage(
+                    role="developer",
+                    content=f"Please must include answer of the following queries in the response: {', '.join(enhanced_queries)}",
                 ),
             ]
         )
@@ -968,7 +973,6 @@ class RAGService:
             draft_mode=draft_mode,
         )
         enhanced_query = enhancement_result["enhanced_query"]
-        print(enhanced_query, 'enhanced query')
         intents: List[str] = enhancement_result["intents"]
 
         # In draft refinement, also embed the original customer query so retrieval
@@ -1031,6 +1035,7 @@ class RAGService:
             original_query=query_text,
             intents=intents,
             draft_mode=draft_mode,
+            enhanced_queries=enhanced_queries,
         )
         prompt_time_ms = (time.perf_counter() - prompt_start) * 1000
         self._track_timing(
@@ -1194,7 +1199,7 @@ class RAGService:
 
         # Execute query in draft mode
         return self.query(
-            query_text,
+            query_text=query_text,
             top_k=top_k,
             chat_history=chat_history,
             channel=channel,

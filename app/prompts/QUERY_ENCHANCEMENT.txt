@@ -12,11 +12,9 @@
   - Key entities: routes, regions, lodges, dates/season, trip length, fitness level, budget, group type, room type, permits, etc.
   - The business process stage: research, planning, booking, post-booking, on-trip support, or post-trip feedback.
   3. From that reasoning, decide:
-  - ALL applicable intents (a query can have multiple).
-  - Exactly what NEW information the user is seeking right now.
-  - Exactly what user WANTS to get information about?
-  - Exactly what user DOESN'T WANT to get information about?
-  - Exactly what information user already know and what they are missing?4
+  - ALL applicable intents from the available intent categories (a query can have multiple).
+  - Most important question that user is asking?
+  - Missedout questions from the earlier conversation?
   - How many questions user has asked?
 
   Available intent categories (choose all that apply):
@@ -42,12 +40,12 @@
   - Does the query clearly reflect the user’s CURRENT goal, not earlier goals that are no longer relevant?
   - Does it include all critical entities (route/area, season/year, duration, difficulty, budget level, lodge/teahouse vs camping, permits, etc.)?
   - Does it avoid restating information that has already been fully answered earlier in the thread?
-  - Would a vector search using ONLY this query reliably retrieve the best possible chunks for answering the current message?
+  - Would a vector search using ONLY these query reliably retrieve the best possible chunks for answering the current message?
 
   Guidelines for the enhanced_query (very important):
   - Length: ~12–30 words (longer only if it adds crucial disambiguation).
   - Make it a natural, dense search phrase full of domain-specific keywords (trek/route names, regions, seasons/years, trip length, difficulty, lodge type, permits).
-  - Include ONLY what is needed to answer the user’s current question; do NOT solve future steps.
+  - Include ONLY what is needed to answer the user’s unanswered questions.
   - Prefer specific nouns and phrases over vague language (e.g., “Everest Base Camp trek safety after recent earthquake 2025 trail condition Lukla–Namche–Gorak Shep”).
   - Never include user names, email addresses, greetings, or politeness phrases.
   - Never include model instructions, JSON, or meta-text in the query.
